@@ -1,0 +1,173 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+library(tidyverse)
+library(bayesplot)
+library(shinystan)
+```
+
+
+
+# Load the sigB data from GSE6865
+
+The original source of data: (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE6865)
+
+```{r}
+temp <- tempfile();
+download.file("ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE6nnn/GSE6865/matrix/GSE6865_series_matrix.txt.gz", temp)
+gse6865_raw_df = read.delim(gzfile(temp), comment.char = "!") #Intermediate data frame representation
+
+# Raw profile data. We scale by 1000 to get to more wieldy values
+gse6865_raw = as.matrix(gse6865_raw_df[,2:15]) / 1000
+rownames(gse6865_raw) = gse6865_raw_df$ID_REF
+
+#Times (in minutes) for the individual samples
+gse6865_raw_time = c(0,5,10,15,20,25,30,40,50,60,70,80,90,100)
+colnames(gse6865_raw) <- sapply(gse6865_raw_time,  FUN = function(x) { paste0(x,"min")})
+
+#We will compute at 1 minute resolution
+smoothTime = 0:100
+
+# For the first measurement, we can expect the value to be 0 (the series are from germination)
+gse6865_raw[is.na(gse6865_raw[,1]),1] = 0
+
+# For the second measurement we will go with a linear interpolation
+na2 = is.na(gse6865_raw[,2])
+gse6865_raw[na2,2] = 0.5 * gse6865_raw[na2,1] + 0.5 * gse6865_raw[na2,3]
+
+#cleanup the intermediate results
+rm(gse6865_raw_df)
+rm(na2)
+rm(temp)
+
+```
+
+```{r}
+plot_random_profiles(20, 1:100, 5, 10, positive_transform = FALSE)
+```
+```{r}
+model = stan_model(file = 'unknown_regulator.stan')
+```
+
+```{r}
+data = simulate_data(num_time = 11, measurement_times = c(1,3,5,7,9,11))
+plot_data = data.frame(time = 1:data$observed$num_time, regulator = data$true$regulator_profile, expression = data$true$expression_full) %>%
+  gather("type","value", -time)
+plot_data2 = data.frame(time = data$observed$measurement_times,  expression_observed = data$observed$expression) %>%
+  gather("type","value", -time)
+plot_data %>% rbind(plot_data2) %>%
+  ggplot(aes(x = time, y = value, color = type)) + geom_line()
+```
+
+
+
+
+```{r}
+fit <- sampling(model, data = data$observed)
+evaluation_summary(rstan::extract(fit), data$true, printParamsResults = FALSE)
+ summary(fit)$summary[,c("n_eff","Rhat")] %>% as.data.frame() %>% summarise(min_n_eff = min(n_eff),max_Rhat = max(Rhat))
+
+num_samples <- 20
+main_geom <- geom_line(alpha = 0.9)
+samples_to_show <-  sample(1:4000, 20)
+samples_regulator <- rstan::extract(fit,"regulator_profile")$regulator_profile[samples_to_show,]
+ggmatplot(1:data$observed$num_time, t(samples_regulator), main_geom = main_geom) + 
+  geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$regulator_profile), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
+  guides(color = FALSE)
+ 
+samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,]
+ggmatplot(data$observed$measurement_times, t(samples_expression), main_geom = main_geom) +
+  geom_line(data = data.frame(x = data$observed$measurement_times,  y = data$true$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
+  geom_line(data = data.frame(x = data$observed$measurement_times,  y = data$observed$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "blue") +
+  guides(color = FALSE)
+
+```
+
+```{r}
+samples_integrated <- array(-1, c(num_samples,length(data$observed$measurement_times)))
+time <- 1:data$observed$num_time
+for(s in 1:num_samples) {
+    params <- c(degradation = data$observed$degradation, bias = 0, sensitivity = data$observed$sensitivity, weight = 1, basal_transcription = 0, protein = approxfun(time, samples_regulator[s,], rule=2));
+  samples_integrated[s,] <-  ode( y = c(x = data$observed$initial_condition), times = data$observed$measurement_times, func = target_ODE, parms = params, method = "ode45")[,"x"];
+  
+  #samples_integrated[s,] <-  numerical_integration(0, data$observed$degradation, data$observed$initial_condition, data$observed$sensitivity, 1, 0, samples_regulator[s,], data$observed$num_time)[data$observed$measurement_times]
+    
+}
+
+
+ggmatplot(data$observed$measurement_times, t(samples_integrated), main_geom = main_geom) + guides(color = FALSE)
+
+samples_integrated <- array(-1, c(num_samples,length(data$observed$measurement_times)))
+time <- 1:data$observed$num_time
+for(s in 1:num_samples) {
+    samples_integrated[s,] <-  numerical_integration(basal_transcription = 0, degradation = data$observed$degradation, initial_condition = data$observed$initial_condition, sensitivity = data$observed$sensitivity, weight = 1, bias = 0, protein = samples_regulator[s,], num_time = data$observed$num_time)[data$observed$measurement_times]
+    
+}
+
+
+ggmatplot(data$observed$measurement_times, t(samples_integrated), main_geom = main_geom) + guides(color = FALSE)
+```
+```{r}
+samples_integrated <- array(-1, c(num_samples,data$observed$num_time))
+time <- 1:data$observed$num_time
+for(s in 1:num_samples) {
+    params <- c(degradation = data$observed$degradation, bias = 0, sensitivity = data$observed$sensitivity, weight = 1, basal_transcription = 0, protein = approxfun(time, samples_regulator[s,], rule=2));
+  samples_integrated[s,] <-  ode( y = c(x = data$observed$initial_condition), times = time, func = target_ODE, parms = params, method = "ode45")[,"x"];
+  
+  #samples_integrated[s,] <-  numerical_integration(0, data$observed$degradation, data$observed$initial_condition, data$observed$sensitivity, 1, 0, samples_regulator[s,], data$observed$num_time)[data$observed$measurement_times]
+    
+}
+
+
+ggmatplot(time, t(samples_integrated), main_geom = main_geom) + guides(color = FALSE)
+
+samples_integrated <- array(-1, c(num_samples,data$observed$num_time))
+for(s in 1:num_samples) {
+    samples_integrated[s,] <-  numerical_integration(basal_transcription = 0, degradation = data$observed$degradation, initial_condition = data$observed$initial_condition, sensitivity = data$observed$sensitivity, weight = 1, bias = 0, protein = samples_regulator[s,], num_time = data$observed$num_time)
+    
+}
+
+
+ggmatplot(time, t(samples_integrated), main_geom = main_geom) + guides(color = FALSE)
+```
+
+```{r}
+integral_model <- stan_model(file = 'integrate_splines.stan')
+```
+
+```{r}
+repeat {
+  data <- simulate_integral_spline(20,6,0.2)
+  if(all(data$true$expression > 0)) {
+    break;
+  }
+}
+fit <- sampling(integral_model, data = data$observed, control = list(adapt_delta = 0.95))
+evaluation_summary(rstan::extract(fit), data$true, printParamsResults = TRUE)
+ summary(fit)$summary[,c("n_eff","Rhat")] %>% as.data.frame() %>% summarise(min_n_eff = min(n_eff),max_Rhat = max(Rhat))
+
+num_samples <- 50
+main_geom <- geom_line(alpha = 0.3)
+samples_to_show <-  sample(1:4000, num_samples)
+samples_regulator <- rstan::extract(fit,"regulator_profile")$regulator_profile[samples_to_show,]
+ggmatplot(1:data$observed$N, t(samples_regulator), main_geom = main_geom) + 
+  geom_line(data = data.frame(x = 1:data$observed$N,  y = data$true$regulator_profile), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
+  guides(color = FALSE)
+ 
+samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,]
+ggmatplot(1:data$observed$N, t(samples_expression), main_geom = main_geom) +
+  geom_line(data = data.frame(x = 1:data$observed$N,  y = data$true$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
+  geom_line(data = data.frame(x = 1:data$observed$N,  y = data$observed$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "blue") +
+  guides(color = FALSE) 
+
+```
+```{r}
+mcmc_parcoord(as.array(fit, pars = c("coeffs","scale","degradation","sensitivity","initial_condition")), np = nuts_params(fit)) #, np_style = parcoord_style_np(div_alpha = 1)
+```
+
