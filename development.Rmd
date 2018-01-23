@@ -141,19 +141,21 @@ ggmatplot(time, t(samples_integrated), main_geom = main_geom) + guides(color = F
 integral_model <- stan_model(file = 'integrate_splines.stan')
 ```
 
+TODO: Better measurement error model (now low variance on lowly expressed genes)
+
 ```{r}
 repeat {
   data <- simulate_integral_spline(20,6,0.2)
-  if(all(data$true$expression > 0)) {
+  if(all(data$true$expression > 0) && sd(data$true$regulator_profile) > 1) {
     break;
   }
 }
 fit <- sampling(integral_model, data = data$observed, control = list(adapt_delta = 0.95))
-evaluation_summary(rstan::extract(fit), data$true, printParamsResults = TRUE)
+evaluation_summary(rstan::extract(fit, c("coeffs","initial_condition","sensitivity","degradation_over_sensitivity")), data$true, printParamsResults = TRUE)
  summary(fit)$summary[,c("n_eff","Rhat")] %>% as.data.frame() %>% summarise(min_n_eff = min(n_eff),max_Rhat = max(Rhat))
 
-num_samples <- 50
-main_geom <- geom_line(alpha = 0.3)
+num_samples <- 100
+main_geom <- geom_line(alpha = 0.2)
 samples_to_show <-  sample(1:4000, num_samples)
 samples_regulator <- rstan::extract(fit,"regulator_profile")$regulator_profile[samples_to_show,]
 ggmatplot(1:data$observed$N, t(samples_regulator), main_geom = main_geom) + 
@@ -168,6 +170,6 @@ ggmatplot(1:data$observed$N, t(samples_expression), main_geom = main_geom) +
 
 ```
 ```{r}
-mcmc_parcoord(as.array(fit, pars = c("coeffs","scale","degradation","sensitivity","initial_condition")), np = nuts_params(fit)) #, np_style = parcoord_style_np(div_alpha = 1)
+mcmc_parcoord(as.array(fit, pars = c("coeffs","degradation","sensitivity","initial_condition")), np = nuts_params(fit), np_style = parcoord_style_np(div_alpha = 0.6))
 ```
 

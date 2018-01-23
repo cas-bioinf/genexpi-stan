@@ -41,11 +41,8 @@ data {
 
   real<lower = 0> scale_prior_sigma;
   real<lower = 0> sensitivity_prior_sigma;
-  real intercept;
 
   real<lower=0> scale;
-  real min_scale;
-
 }
 
 transformed data {
@@ -74,6 +71,7 @@ parameters {
   real<lower=0> initial_condition;
   real<lower=0> sensitivity;
   real<lower=0> degradation_over_sensitivity;
+  real intercept;
   //real<lower=0> degradation;
 
 
@@ -89,7 +87,7 @@ transformed parameters {
 
   {
 
-    regulator_profile = to_vector(coeffs*B) * (scale + min_scale) + intercept;
+    regulator_profile = to_vector(coeffs*B) * scale + intercept;
     predicted_expression[1] = initial_condition;
     for (i in 2:N)
     {
@@ -107,9 +105,8 @@ model {
 
     initial_condition ~ normal(0,1);
     coeffs ~ normal(0,1);
-    scale ~ normal(0,scale_prior_sigma);
+    //scale ~ normal(0,scale_prior_sigma);
     intercept ~ normal(0,1);
     sensitivity ~ normal(0, sensitivity_prior_sigma);
     degradation_over_sensitivity ~ lognormal(0,1);
-    //degradation ~ normal(0,1);
 }

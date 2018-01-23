@@ -114,10 +114,11 @@ simulate_integral_spline <- function(N, num_knots, measurement_sigma) {
   intercept <- 0# rnorm(1, 0, 1)
 
   scale_prior_sigma = 5
-  scale <- abs(rnorm(1, 0, scale_prior_sigma))
-  min_scale <- 0.5
+  #scale <- abs(rnorm(1, 0, scale_prior_sigma))
+  #min_scale <- 0.5
+  scale <- 10
 
-  regulator_profile <- array((spline_basis %*% coeffs) * (scale + min_scale) + intercept, N)
+  regulator_profile <- array((spline_basis %*% coeffs)  * scale + intercept, N)
 
   sensitivity_prior_sigma = 1
   sensitivity = abs(rnorm(1, 0, sensitivity_prior_sigma))
@@ -146,6 +147,7 @@ simulate_integral_spline <- function(N, num_knots, measurement_sigma) {
       initial_condition = initial_condition,
       sensitivity = sensitivity,
       expression = expression_true,
+      intercept = intercept,
       degradation_over_sensitivity = degradation_over_sensitivity
       #degradation = degradation
     ), observed = list(
@@ -155,11 +157,9 @@ simulate_integral_spline <- function(N, num_knots, measurement_sigma) {
       spline_degree = spline_degree,
       expression = expression_observed,
       measurement_sigma = measurement_sigma,
-      intercept = intercept,
       scale_prior_sigma = scale_prior_sigma,
       sensitivity_prior_sigma = sensitivity_prior_sigma,
-      scale = scale,
-      min_scale = min_scale
+      scale = scale
     )
   ))
 }
