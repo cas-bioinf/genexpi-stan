@@ -39,7 +39,8 @@ data {
   vector[num_knots] knots;  // the sequence of knots
   int spline_degree;        // the degree of spline (is equal to order - 1)
 
-  real<lower=0> measurement_sigma;
+  real<lower=0> measurement_sigma_relative;
+  real<lower=0> measurement_sigma_absolute;
 
   real<lower = 0> scale_prior_sigma;
   real<lower = 0> sensitivity_prior_sigma;
@@ -132,7 +133,9 @@ model {
 
     //Observation model
     for(m in 1:num_measurements) {
-      log(expression[m]) ~ normal(log(predicted_expression[measurement_times[m]]), measurement_sigma);
+      real sigma = measurement_sigma_absolute + measurement_sigma_relative * predicted_expression[measurement_times[m]];
+      expression[m] ~ normal(predicted_expression[measurement_times[m]], sigma);
+      //log(expression[m]) ~ normal(log(predicted_expression[measurement_times[m]]), measurement_sigma);
     }
 
     initial_condition ~ normal(0,1);

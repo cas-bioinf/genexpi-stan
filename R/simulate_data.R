@@ -94,7 +94,7 @@ simulate_integral <- function(N, gp_length, measurement_sigma) {
   ))
 }
 
-simulate_integral_spline <- function(num_time, num_knots, measurement_times, measurement_sigma) {
+simulate_integral_spline <- function(num_time, num_knots, measurement_times, measurement_sigma_absolute, measurement_sigma_relative, integrate_ode45 = TRUE) {
   time <- 1:num_time;
   #spline_variance <- rnorm(1,0,1)
 
@@ -134,16 +134,15 @@ simulate_integral_spline <- function(num_time, num_knots, measurement_times, mea
 
   initial_condition <- abs(rnorm(1,0,1))
 
+  if(integrate_ode45){
+    params <- c(degradation = degradation, bias = 0, sensitivity = sensitivity, weight = 1, basal_transcription = 0, protein = approxfun(time, regulator_profile, rule=2));
+    expression_true <-  ode( y = c(x = initial_condition), times = time, func = target_ODE, parms = params, method = "ode45")[,"x"];
+  } else {
+    expression_true <- numerical_integration(0, degradation, initial_condition, sensitivity, weight = 1, bias = 0, regulator_profile, num_time)
+  }
 
-  # expression_true[1] <- initial_condition;
-  #
-  # for (i in 2:num_time) {
-  #   expression_true[i] <- expression_true[i - 1] * (1 - degradation) + sensitivity/(1 + exp(-regulator_profile[i]))
-  # }
-
-  expression_true <- numerical_integration(0, degradation, initial_condition, sensitivity, weight = 1, bias = 0, regulator_profile, num_time)
-
-  expression_observed <- exp(rnorm(length(measurement_times), log(expression_true[measurement_times]), measurement_sigma))
+  #expression_observed <- exp(rnorm(length(measurement_times), log(expression_true[measurement_times]), measurement_sigma))
+  expression_observed <- rtruncnorm(length(measurement_times), mean = expression_true[measurement_times], sd =  measurement_sigma_absolute + measurement_sigma_relative * expression_true[measurement_times], a = 0)
 
   return(list(
     true = list (
@@ -163,7 +162,8 @@ simulate_integral_spline <- function(num_time, num_knots, measurement_times, mea
       knots = knots,
       spline_degree = spline_degree,
       expression = expression_observed,
-      measurement_sigma = measurement_sigma,
+      measurement_sigma_absolute = measurement_sigma_absolute,
+      measurement_sigma_relative = measurement_sigma_relative,
       scale_prior_sigma = scale_prior_sigma,
       sensitivity_prior_sigma = sensitivity_prior_sigma,
       degradation_prior_sigma = degradation_prior_sigma,
