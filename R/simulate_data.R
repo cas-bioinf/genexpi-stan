@@ -94,15 +94,15 @@ simulate_integral <- function(N, gp_length, measurement_sigma) {
   ))
 }
 
-simulate_integral_spline <- function(N, num_knots, measurement_sigma) {
-  time <- 1:N;
+simulate_integral_spline <- function(num_time, num_knots, measurement_times, measurement_sigma) {
+  time <- 1:num_time;
   #spline_variance <- rnorm(1,0,1)
 
   #TODO: initial condition
 
   spline_degree = 3
-  knots <- seq(from = 1, to = N, length.out = num_knots)
-  spline_basis <- bs(1:N, knots = knots, degree = spline_degree)
+  knots <- seq(from = 1, to = num_time, length.out = num_knots)
+  spline_basis <- bs(1:num_time, knots = knots, degree = spline_degree)
 
   num_coeff <- dim(spline_basis)[2] - 1
   if(any(spline_basis[,num_coeff + 1] != 0)) {
@@ -111,34 +111,39 @@ simulate_integral_spline <- function(N, num_knots, measurement_sigma) {
   spline_basis = spline_basis[,1:num_coeff]
 
   coeffs <- rnorm(num_coeff, 0, 1)
-  intercept <- 0# rnorm(1, 0, 1)
+  intercept <- rnorm(1, 0, 1)
 
   scale_prior_sigma = 5
   #scale <- abs(rnorm(1, 0, scale_prior_sigma))
   #min_scale <- 0.5
-  scale <- 10
+  scale <- 5
 
-  regulator_profile <- array((spline_basis %*% coeffs)  * scale + intercept, N)
+  regulator_profile <- array((spline_basis %*% coeffs)  * scale + intercept, num_time)
 
-  sensitivity_prior_sigma = 1
-  sensitivity = abs(rnorm(1, 0, sensitivity_prior_sigma))
+  sensitivity_prior_sigma <-  1
+  sensitivity <- abs(rnorm(1, 0, sensitivity_prior_sigma))
 
-  degradation_over_sensitivity <- rlnorm(1,0,1)
-  degradation = degradation_over_sensitivity * sensitivity;
+  #degradation_over_sensitivity <- rlnorm(1,0,1)
+  #degradation <- degradation_over_sensitivity * sensitivity;
+  degradation_prior_sigma <- 0.3
+  degradation <- abs(rnorm(1,0, degradation_prior_sigma))
 
 
 
-  expression_true <- array(-1, N)
+  expression_true <- array(-1, num_time)
 
   initial_condition <- abs(rnorm(1,0,1))
 
-  expression_true[1] <- initial_condition;
 
-  for (i in 2:N) {
-    expression_true[i] <- expression_true[i - 1] * (1 - degradation) + sensitivity/(1 + exp(-regulator_profile[i]))
-  }
+  # expression_true[1] <- initial_condition;
+  #
+  # for (i in 2:num_time) {
+  #   expression_true[i] <- expression_true[i - 1] * (1 - degradation) + sensitivity/(1 + exp(-regulator_profile[i]))
+  # }
 
-  expression_observed <- exp(rnorm(N, log(expression_true), measurement_sigma))
+  expression_true <- numerical_integration(0, degradation, initial_condition, sensitivity, weight = 1, bias = 0, regulator_profile, num_time)
+
+  expression_observed <- exp(rnorm(length(measurement_times), log(expression_true[measurement_times]), measurement_sigma))
 
   return(list(
     true = list (
@@ -148,10 +153,12 @@ simulate_integral_spline <- function(N, num_knots, measurement_sigma) {
       sensitivity = sensitivity,
       expression = expression_true,
       intercept = intercept,
-      degradation_over_sensitivity = degradation_over_sensitivity
-      #degradation = degradation
+      #degradation_over_sensitivity = degradation_over_sensitivity
+      degradation = degradation
     ), observed = list(
-      N = N,
+      num_time = num_time,
+      num_measurements = length(measurement_times),
+      measurement_times = measurement_times,
       num_knots = num_knots,
       knots = knots,
       spline_degree = spline_degree,
@@ -159,6 +166,7 @@ simulate_integral_spline <- function(N, num_knots, measurement_sigma) {
       measurement_sigma = measurement_sigma,
       scale_prior_sigma = scale_prior_sigma,
       sensitivity_prior_sigma = sensitivity_prior_sigma,
+      degradation_prior_sigma = degradation_prior_sigma,
       scale = scale
     )
   ))
@@ -234,8 +242,7 @@ numerical_integration <- function(basal_transcription, degradation, initial_cond
   basal_over_degradation = basal_transcription / degradation;
 
   regulation_input = bias + weight * protein;
-  #synthesis = integrationTimeStep * ( 1 / (1 + exp(-regulation_input))) #Don't forget to change the line at the end
-  synthesis = regulation_input + 3
+  synthesis = integrationTimeStep * ( 1 / (1 + exp(-regulation_input))) #Don't forget to change the line at the end
 
   residual = -0.5 * synthesis[1];
   degradationPerStep = exp(-degradation * integrationTimeStep)

@@ -145,31 +145,34 @@ TODO: Better measurement error model (now low variance on lowly expressed genes)
 
 ```{r}
 repeat {
-  data <- simulate_integral_spline(20,6,0.2)
+  data <- simulate_integral_spline(51,6,seq(1,51,by = 5), 0.2)
   if(all(data$true$expression > 0) && sd(data$true$regulator_profile) > 1) {
     break;
   }
 }
 fit <- sampling(integral_model, data = data$observed, control = list(adapt_delta = 0.95))
-evaluation_summary(rstan::extract(fit, c("coeffs","initial_condition","sensitivity","degradation_over_sensitivity")), data$true, printParamsResults = TRUE)
+evaluation_summary(rstan::extract(fit, c("coeffs","initial_condition","sensitivity","degradation")), data$true, printParamsResults = TRUE)
  summary(fit)$summary[,c("n_eff","Rhat")] %>% as.data.frame() %>% summarise(min_n_eff = min(n_eff),max_Rhat = max(Rhat))
 
 num_samples <- 100
 main_geom <- geom_line(alpha = 0.2)
 samples_to_show <-  sample(1:4000, num_samples)
 samples_regulator <- rstan::extract(fit,"regulator_profile")$regulator_profile[samples_to_show,]
-ggmatplot(1:data$observed$N, t(samples_regulator), main_geom = main_geom) + 
-  geom_line(data = data.frame(x = 1:data$observed$N,  y = data$true$regulator_profile), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
+ggmatplot(1:data$observed$num_time, t(samples_regulator), main_geom = main_geom) + 
+  geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$regulator_profile), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
   guides(color = FALSE)
  
 samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,]
-ggmatplot(1:data$observed$N, t(samples_expression), main_geom = main_geom) +
-  geom_line(data = data.frame(x = 1:data$observed$N,  y = data$true$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
-  geom_line(data = data.frame(x = 1:data$observed$N,  y = data$observed$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "blue") +
+ggmatplot(1:data$observed$num_time, t(samples_expression), main_geom = main_geom) +
+  geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
+  geom_point(data = data.frame(x = data$observed$measurement_times,  y = data$observed$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "blue", size = 3) +
   guides(color = FALSE) 
 
 ```
 ```{r}
 mcmc_parcoord(as.array(fit, pars = c("coeffs","degradation","sensitivity","initial_condition")), np = nuts_params(fit), np_style = parcoord_style_np(div_alpha = 0.6))
+
+mcmc_parcoord(as.array(fit, pars = c("predicted_expression")), np = nuts_params(fit), np_style = parcoord_style_np(div_alpha = 0.6))
+
 ```
 
