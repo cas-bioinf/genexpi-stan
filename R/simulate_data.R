@@ -98,7 +98,8 @@ simulate_spline <- function(num_time, num_knots, measurement_times, measurement_
 
   expression_true <- array(-1, num_time)
 
-  initial_condition <- abs(rnorm(1,0,1))
+  initial_condition_prior_sigma <- 1
+  initial_condition <- abs(rnorm(1,0,initial_condition_prior_sigma))
 
   if(integrate_ode45){
     params <- c(degradation = degradation, bias = 0, sensitivity = sensitivity, weight = 1, basal_transcription = 0, protein = approxfun(time, regulator_profile, rule=2));
@@ -110,15 +111,36 @@ simulate_spline <- function(num_time, num_knots, measurement_times, measurement_
   #expression_observed <- exp(rnorm(length(measurement_times), log(expression_true[measurement_times]), measurement_sigma))
   expression_observed <- rtruncnorm(length(measurement_times), mean = expression_true[measurement_times], sd =  measurement_sigma_absolute + measurement_sigma_relative * expression_true[measurement_times], a = 0)
 
+  #Handle regulator
+  w_prior_sigma <- 1
+  b_prior_sigma <- 5
+  inv_w <- rlnorm(1,0,w_prior_sigma)
+
+  # if (w > 0) {
+  #   max_b <- min(expression_true)
+  #   b <- rtruncnorm(1, mean = 0, sd = b_prior_sigma, b = max_b)
+  # } else {
+  #   min_b <- max(expression_true)
+  #   b <- rtruncnorm(1, mean = 0, sd = b_prior_sigma, a = min_b)
+  # }
+  min_b <- -min(inv_w * regulator_profile)
+  b_raw <- abs(rnorm(1,0,b_prior_sigma))
+  regulator_expression_true <- regulator_profile * inv_w + min_b + b_raw
+  w <- 1/inv_w;
+  b <- -(min_b + b_raw) / inv_w;
+  regulator_expression_observed <- rtruncnorm(length(measurement_times), mean = regulator_expression_true[measurement_times], sd =  measurement_sigma_absolute + measurement_sigma_relative * regulator_expression_true[measurement_times], a = 0)
+
   return(list(
     true = list (
       coeffs = coeffs,
       regulator_profile = regulator_profile,
+      regulator_expression = regulator_expression_true,
+      w = w,
+      b = b,
       initial_condition = initial_condition,
       sensitivity = sensitivity,
       expression = expression_true,
       intercept = intercept,
-      #degradation_over_sensitivity = degradation_over_sensitivity
       degradation = degradation
     ), observed = list(
       num_time = num_time,
@@ -128,10 +150,14 @@ simulate_spline <- function(num_time, num_knots, measurement_times, measurement_
       knots = knots,
       spline_degree = spline_degree,
       expression = expression_observed,
+      regulator_expression = regulator_expression_observed,
       measurement_sigma_absolute = measurement_sigma_absolute,
       measurement_sigma_relative = measurement_sigma_relative,
+      initial_condition_prior_sigma = initial_condition_prior_sigma,
       sensitivity_prior_sigma = sensitivity_prior_sigma,
       degradation_prior_sigma = degradation_prior_sigma,
+      w_prior_sigma = w_prior_sigma,
+      b_prior_sigma = b_prior_sigma,
       scale = scale
     )
   ))
