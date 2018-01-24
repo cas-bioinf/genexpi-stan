@@ -1,0 +1,125 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r setup}
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+library(tidyverse)
+```
+
+
+# Load the sigB data from GSE6865
+
+The original source of data: (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE6865)
+
+```{r}
+temp <- tempfile();
+download.file("ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE6nnn/GSE6865/matrix/GSE6865_series_matrix.txt.gz", temp)
+gse6865_raw_df = read.delim(gzfile(temp), comment.char = "!") #Intermediate data frame representation
+
+# Raw profile data. We scale by 1000 to get to more wieldy values
+gse6865_raw = as.matrix(gse6865_raw_df[,2:15]) / 1000
+rownames(gse6865_raw) = gse6865_raw_df$ID_REF
+
+#Times (in minutes) for the individual samples
+gse6865_raw_time = c(0,5,10,15,20,25,30,40,50,60,70,80,90,100)
+colnames(gse6865_raw) <- sapply(gse6865_raw_time,  FUN = function(x) { paste0(x,"min")})
+
+# For the first measurement, we can expect the value to be 0 (the series are from germination)
+gse6865_raw[is.na(gse6865_raw[,1]),1] = 0
+
+# For the second measurement we will go with a linear interpolation
+na2 = is.na(gse6865_raw[,2])
+gse6865_raw[na2,2] = 0.5 * gse6865_raw[na2,1] + 0.5 * gse6865_raw[na2,3]
+
+#cleanup the intermediate results
+rm(gse6865_raw_df)
+rm(na2)
+rm(temp)
+
+```
+```{r}
+num_knots <- 4
+smooth_time  <- 0:100
+knots <- quantile(gse6865_raw_time + 1, probs = seq(0, 1, length.out = num_knots))
+gse6865_splined <- spline_profile_matrix(gse6865_raw, gse6865_raw_time, smooth_time, knots = knots)
+```
+
+
+
+```{r}
+unknown_reg_model <- stan_model(file = 'unknown_regulator_splines.stan')
+```
+
+```{r}
+fits <- list()
+```
+
+```{r}
+#Genes fit by sigA that don't really have a sigA-like regulator profile:
+# yfkJ, yhdL (requires smaller abs. error)
+#Those where it works: codY, clpQ, purT, yqxD
+#Some not regulated by sigA: pyrB, dnaA
+targets <- c("codY","clpQ","purT","yqxD", "yfkJ","yhdL", "dnaA", "pyrB")
+for(target in targets) {
+
+  data <- list(
+    num_time = length(smooth_time),
+    num_measurements = length(gse6865_raw_time),
+    measurement_times = gse6865_raw_time + 1,
+    num_knots = num_knots,
+    #knots = quantile(gse6865_raw_time + 1, probs = seq(1 / (num_knots + 1) ,1 - (1/ (num_knots + 1)), length.out = num_knots)),
+    knots = knots,
+    spline_degree = 3,
+    expression = gse6865_raw[target,],
+    measurement_sigma_absolute = 0.5,
+    measurement_sigma_relative = 0.2,
+    sensitivity_prior_sigma = 1,
+    degradation_prior_sigma = 0.3,
+    scale = 5
+  )
+  
+  fit <- sampling(unknown_reg_model, data = data, control = list(adapt_delta = 0.95))
+  cat("\n ======== ",target," =======\n")
+  print(summary(fit, pars = c("coeffs","initial_condition","sensitivity","degradation", "intercept"))$summary)
+  
+  num_samples <- 100
+  main_geom <- geom_line(alpha = 0.2)
+  samples_to_show <-  sample(1:4000, num_samples)
+  samples_regulator <- rstan::extract(fit,"regulator_profile")$regulator_profile[samples_to_show,]
+  print(ggmatplot(1:data$num_time, t(samples_regulator), main_geom = main_geom) + ggtitle(paste0("Regulator - ", target)))
+   
+  samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,]
+  print(ggmatplot(1:data$num_time, t(samples_expression), main_geom = main_geom) +
+    geom_point(data = data.frame(x = data$measurement_times,  y = data$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "blue", size = 3) + ggtitle(paste0("Expression - ", target)))
+  
+  fits[[target]] <- fit
+}
+```
+
+```{r}
+possible_source <- "sigA"
+
+for(target in targets) {
+  corr_dist <- array(-100, 4000)
+  samples_regulator <- rstan::extract(fits[[target]],"regulator_profile")$regulator_profile
+  source_profile_splined <- gse6865_splined[possible_source,]
+  for(s in 1:4000) {
+    corr_dist[s] <- cor(source_profile_splined, samples_regulator[s,])
+  }
+  
+  cat("\n ======== ",target," =======\n")
+  print(ggplot(data.frame(corr = abs(corr_dist)), aes(x=corr)) + geom_histogram(bins = 30) + ggtitle(paste0("Abs. corr - ", target)))
+  cat("P(|cor| > 0.9) = ", mean(abs(corr_dist) > 0.9), "\n")
+  cat("#(|cor| > 0.9) = ", sum(abs(corr_dist) > 0.9), "\n")
+  cat("E(|cor|) = ", mean(abs(corr_dist)), "\n")
+  cat("E((1-|cor|)^2) = ", mean((1 - abs(corr_dist))^2), "\n")
+#  mean(exp(-(1-abs(corr_dist))^2))
+#  ggplot(data.frame(corr_exp = exp(-(1-abs(corr_dist))^2)), aes(x=corr_exp)) + geom_histogram(bins = 30)
+}
+```
+

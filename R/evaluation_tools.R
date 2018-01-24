@@ -146,7 +146,8 @@ ggmatplot <- function(xs, ys, x_title = "x", y_title = "value", main_geom = geom
   ggplot(data, aes(x = x, y = value, color = column)) + main_geom +
     color_scale +
     scale_x_continuous(name = x_title) +
-    scale_y_continuous(name = y_title)
+    scale_y_continuous(name = y_title) +
+    guides(color = FALSE)
 }
 
 averageSamplingTime <- function(fits)

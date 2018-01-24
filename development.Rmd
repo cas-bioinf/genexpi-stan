@@ -14,54 +14,21 @@ library(shinystan)
 
 
 
-# Load the sigB data from GSE6865
 
-The original source of data: (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE6865)
 
 ```{r}
-temp <- tempfile();
-download.file("ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE6nnn/GSE6865/matrix/GSE6865_series_matrix.txt.gz", temp)
-gse6865_raw_df = read.delim(gzfile(temp), comment.char = "!") #Intermediate data frame representation
-
-# Raw profile data. We scale by 1000 to get to more wieldy values
-gse6865_raw = as.matrix(gse6865_raw_df[,2:15]) / 1000
-rownames(gse6865_raw) = gse6865_raw_df$ID_REF
-
-#Times (in minutes) for the individual samples
-gse6865_raw_time = c(0,5,10,15,20,25,30,40,50,60,70,80,90,100)
-colnames(gse6865_raw) <- sapply(gse6865_raw_time,  FUN = function(x) { paste0(x,"min")})
-
-#We will compute at 1 minute resolution
-smoothTime = 0:100
-
-# For the first measurement, we can expect the value to be 0 (the series are from germination)
-gse6865_raw[is.na(gse6865_raw[,1]),1] = 0
-
-# For the second measurement we will go with a linear interpolation
-na2 = is.na(gse6865_raw[,2])
-gse6865_raw[na2,2] = 0.5 * gse6865_raw[na2,1] + 0.5 * gse6865_raw[na2,3]
-
-#cleanup the intermediate results
-rm(gse6865_raw_df)
-rm(na2)
-rm(temp)
-
+unknown_reg_model <- stan_model(file = 'unknown_regulator_splines.stan')
 ```
 
-```{r}
-integral_model <- stan_model(file = 'integrate_splines.stan')
-```
-
-TODO: Better measurement error model (now low variance on lowly expressed genes)
 
 ```{r}
 repeat {
-  data <- simulate_integral_spline(101,8,seq(1,101,by = 10), 0.2, 0.2)
+  data <- simulate_spline(101,8,seq(1,101,by = 10), 0.2, 0.2)
   if(all(data$true$expression > 0) && sd(data$true$regulator_profile) > 1) {
     break;
   }
 }
-fit <- sampling(integral_model, data = data$observed, control = list(adapt_delta = 0.95))
+fit <- sampling(unknown_reg_model, data = data$observed)
 evaluation_summary(rstan::extract(fit, c("coeffs","initial_condition","sensitivity","degradation", "intercept")), data$true, printParamsResults = TRUE)
  summary(fit)$summary[,c("n_eff","Rhat")] %>% as.data.frame() %>% summarise(min_n_eff = min(n_eff),max_Rhat = max(Rhat))
 
@@ -70,14 +37,12 @@ main_geom <- geom_line(alpha = 0.2)
 samples_to_show <-  sample(1:4000, num_samples)
 samples_regulator <- rstan::extract(fit,"regulator_profile")$regulator_profile[samples_to_show,]
 ggmatplot(1:data$observed$num_time, t(samples_regulator), main_geom = main_geom) + 
-  geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$regulator_profile), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
-  guides(color = FALSE)
+  geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$regulator_profile), aes(x=x, y=y), inherit.aes = FALSE, color = "black") 
  
 samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,]
 ggmatplot(1:data$observed$num_time, t(samples_expression), main_geom = main_geom) +
   geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
-  geom_point(data = data.frame(x = data$observed$measurement_times,  y = data$observed$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "blue", size = 3) +
-  guides(color = FALSE) 
+  geom_point(data = data.frame(x = data$observed$measurement_times,  y = data$observed$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "blue", size = 3) 
 
 ```
 ```{r}

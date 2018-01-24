@@ -33,7 +33,7 @@ data {
   int num_time;
   int num_measurements;
   vector<lower=0>[num_measurements] expression;
-  int<lower=0,upper=num_time> measurement_times[num_measurements];
+  int<lower=1,upper=num_time> measurement_times[num_measurements];
 
   int num_knots;            // num of knots
   vector[num_knots] knots;  // the sequence of knots
@@ -42,7 +42,6 @@ data {
   real<lower=0> measurement_sigma_relative;
   real<lower=0> measurement_sigma_absolute;
 
-  real<lower = 0> scale_prior_sigma;
   real<lower = 0> sensitivity_prior_sigma;
   real<lower = 0> degradation_prior_sigma;
 
@@ -61,6 +60,13 @@ transformed data {
     time_real[i] = i;
   }
 
+  {
+    for(m in 2:num_measurements) {
+      if(measurement_times[m - 1] >= measurement_times[m]) {
+        reject("Measurement times have to be increasing");
+      }
+    }
+  }
 
   ext_knots_temp = append_row(rep_vector(knots[1], spline_degree), knots);
   ext_knots = append_row(ext_knots_temp, rep_vector(knots[num_knots], spline_degree));

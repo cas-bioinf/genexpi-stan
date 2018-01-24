@@ -60,41 +60,7 @@ plot_random_profiles <- function(n, time, scale, length, true_time = time, true_
   return(result)
 }
 
-
-simulate_integral <- function(N, gp_length, measurement_sigma) {
-  time <- 1:N;
-  gp_variance <- rnorm(1,0,1)
-  regulator_profile <- generate_random_profile(time, gp_variance, gp_length, positive_transform = FALSE) %>%
-    array(N) #Transform to 1D array
-
-  degradation = runif(1,0,1)#exp(rnorm(1, 2,1));
-
-  expression_true <- array(-1, N)
-
-  expression_true[1] = regulator_profile[1];
-
-  for (i in 2:N) {
-    expression_true[i] = expression_true[i - 1] * (1 - degradation) + 1/exp(-regulator_profile[i])
-  }
-
-  expression_observed <- rnorm(N, expression_true, measurement_sigma)
-
-  return(list(
-    true = list (
-      regulator_profile = regulator_profile,
-      gp_variance = gp_variance,
-      expression = expression_true
-    ), observed = list(
-      N = N,
-      expression = expression_observed,
-      gp_length = gp_length,
-      measurement_sigma = measurement_sigma,
-      degradation = degradation
-    )
-  ))
-}
-
-simulate_integral_spline <- function(num_time, num_knots, measurement_times, measurement_sigma_absolute, measurement_sigma_relative, integrate_ode45 = TRUE) {
+simulate_spline <- function(num_time, num_knots, measurement_times, measurement_sigma_absolute, measurement_sigma_relative, integrate_ode45 = TRUE) {
   time <- 1:num_time;
   #spline_variance <- rnorm(1,0,1)
 
@@ -164,7 +130,6 @@ simulate_integral_spline <- function(num_time, num_knots, measurement_times, mea
       expression = expression_observed,
       measurement_sigma_absolute = measurement_sigma_absolute,
       measurement_sigma_relative = measurement_sigma_relative,
-      scale_prior_sigma = scale_prior_sigma,
       sensitivity_prior_sigma = sensitivity_prior_sigma,
       degradation_prior_sigma = degradation_prior_sigma,
       scale = scale
@@ -173,7 +138,7 @@ simulate_integral_spline <- function(num_time, num_knots, measurement_times, mea
 }
 
 
-simulate_data <- function(num_time = 101, measurement_times = seq(1, num_time, by = 10))
+simulate_gp <- function(num_time = 101, measurement_times = seq(1, num_time, by = 10))
 {
   gp_length <- 3
   gp_variance <- 1
