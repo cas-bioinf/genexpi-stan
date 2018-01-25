@@ -1,0 +1,84 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+library(tidyverse)
+library(bayesplot)
+library(shinystan)
+```
+
+
+
+
+
+```{r}
+multiple_targets_model <- stan_model(file = 'multiple_targets_splines.stan')
+```
+
+```{r}
+data <- simulate_multiple_targets_spline(3,31,5,seq(1,31,by = 3), 0.2, 0.2, regulator_measured = TRUE)
+print(data$true[c("degradation","sensitivity","w","b")])
+data.frame(time = 1:data$observed$num_time, regulator = data$true$regulator_expression, target1 = data$true$expression[1,], target2 = data$true$expression[2,], target3 = data$true$expression[3,]) %>%
+  gather("profile", "value",-time) %>%
+  ggplot(aes(x=time, y = value, color = profile)) + geom_line()
+```
+
+```{r}
+data <- simulate_multiple_targets_spline(3,31,5,seq(1,31,by = 3), 0.2, 0.2, regulator_measured = TRUE)
+
+fit <- sampling(multiple_targets_model, data = data$observed, init = function(x) { data$true })
+evaluation_summary(rstan::extract(fit, c("coeffs","initial_condition","sensitivity","degradation", "intercept","w","b")), data$true, printParamsResults = TRUE)
+ summary(fit)$summary[,c("n_eff","Rhat")] %>% as.data.frame() %>% summarise(min_n_eff = min(n_eff),max_Rhat = max(Rhat))
+
+num_samples <- 100
+main_geom <- geom_line(alpha = 0.2)
+samples_to_show <-  sample(1:4000, num_samples)
+
+
+samples_regulator_expression <- rstan::extract(fit,"predicted_regulator_expression")$predicted_regulator_expression[samples_to_show,]
+regulator_plot <- ggmatplot(1:data$observed$num_time, t(samples_regulator_expression), main_geom = main_geom) +
+  geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$regulator_expression), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + ggtitle("Regulator")
+
+if(data$observed$regulator_measured != 0) {
+  regulator_plot <- regulator_plot + geom_point(data = data.frame(x = data$observed$measurement_times,  y = data$observed$regulator_expression), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) 
+}
+regulator_plot
+
+
+samples_regulator <- rstan::extract(fit,"regulator_profile")$regulator_profile[samples_to_show,]
+ggmatplot(1:data$observed$num_time, t(samples_regulator), main_geom = main_geom) +
+  geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$regulator_profile), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + ggtitle("Regulator raw")
+
+
+samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,,,drop=FALSE]
+for(t in 1:data$observed$num_targets) { 
+  print(ggmatplot(1:data$observed$num_time, t(samples_expression[,t,]), main_geom = main_geom) +
+    geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$expression[t,]), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
+    geom_point(data = data.frame(x = data$observed$measurement_times,  y = data$observed$expression[t,]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Target ",t)))
+}
+
+
+```
+```{r}
+np_style <- parcoord_style_np(div_alpha = 0.6)
+
+mcmc_parcoord(as.array(fit, pars = c("coeffs","degradation","sensitivity","initial_condition","w","b_raw","intercept_raw")), np = nuts_params(fit), np_style = np_style)
+
+mcmc_parcoord(as.array(fit, pars = c("coeffs","initial_condition","b_raw","intercept_raw")), np = nuts_params(fit), np_style = np_style)
+
+
+target <- 3
+expression_data <- as.array(fit, pars = c("predicted_expression"))
+target_data <- expression_data[,,seq(1,(dim(tt)[3]), by = 3) - 1 + target]
+mcmc_parcoord(target1_data, np = nuts_params(fit), np_style = np_style)
+
+
+mcmc_parcoord(as.array(fit, pars = c("predicted_regulator_expression")), np = nuts_params(fit), np_style = np_style)
+
+```
+

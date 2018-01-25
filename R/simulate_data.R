@@ -2,8 +2,7 @@ target_ODE <- function(t, state, parameters, protein_transform = identity)
 {
   with(as.list(c(state, parameters)), {
     regulatoryInput = bias + weight * protein_transform(protein(t));
-    #dX = basal_transcription + (sensitivity/(1 + exp(-regulatoryInput))) - degradation * x;
-    dX = basal_transcription + sensitivity * (regulatoryInput + 3) - degradation * x;
+    dX = basal_transcription + (sensitivity/(1 + exp(-regulatoryInput))) - degradation * x;
     list(dX)
   })
 }
@@ -163,6 +162,147 @@ simulate_spline <- function(num_time, num_knots, measurement_times, measurement_
   ))
 }
 
+
+simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, measurement_times, measurement_sigma_absolute, measurement_sigma_relative, regulator_measured = TRUE, integrate_ode45 = TRUE) {
+  time <- 1:num_time;
+
+  spline_degree = 3
+  knots <- seq(from = 1, to = num_time, length.out = num_knots)
+  spline_basis <- bs(1:num_time, knots = knots, degree = spline_degree)
+
+  num_coeff <- dim(spline_basis)[2] - 1
+  if(any(spline_basis[,num_coeff + 1] != 0)) {
+    stop("Broken assumption of zero column in bs output")
+  }
+  spline_basis = spline_basis[,1:num_coeff]
+
+  scale <- 5
+
+  #Rejection sampling to get interesting profile
+  n_rejections <- 0
+  repeat {
+    coeffs <- rnorm(num_coeff, 0, 1)
+    regulator_profile <- array((spline_basis %*% coeffs)  * scale, num_time)
+    if(sd(regulator_profile) > 1
+       && sd(regulator_profile[1:floor(num_time / 2)]) > 1
+       && sd(regulator_profile[ceiling(num_time / 2):num_time]) > 1
+       && mean(diff(regulator_profile) > 1e-2) > 0.2 #Avoid monotonicity
+       && mean(diff(regulator_profile) < 1e-2) > 0.2
+    ) {
+      break;
+    }
+    n_rejections <- n_rejections + 1
+  }
+  cat(n_rejections, " rejections regulator\n")
+
+  min_intercept <-  -min(regulator_profile)
+  if(regulator_measured) {
+    intercept_prior_sigma <- 1#scale
+    intercept <- min_intercept + abs(rnorm(1, 0, intercept_prior_sigma))
+  } else {
+    intercept <- min_intercept
+    intercept_prior_sigma <- 0.01
+  }
+
+
+
+
+  expression_true <- array(-1, c(num_targets,num_time))
+  expression_observed <- array(-1, c(num_targets,length(measurement_times)))
+
+  sensitivity_prior_sigma <-  1
+  degradation_prior_mean <- -3
+  degradation_prior_sigma <- 1
+  b_prior_sigma <- 2
+  initial_condition_prior_sigma <- 1
+  w_prior_sigma <- 2
+
+  b_raw <- array(-Inf, num_targets)
+  b <- array(-Inf, num_targets)
+  w <- array(-Inf, num_targets)
+  initial_condition <- array(-Inf, num_targets)
+  degradation <- array(-Inf, num_targets)
+  sensitivity <- array(-Inf, num_targets)
+
+
+  n_rejections <- 0
+  for(t in 1:num_targets) {
+    #Rejection sampling to have interesting profiles
+    repeat {
+      sensitivity[t] <- abs(rnorm(1, 0, sensitivity_prior_sigma))
+
+      #degradation_over_sensitivity[t] <- rlnorm(1,0,1)
+      #degradation[t] <- degradation_over_sensitivity[t] * sensitivity[t];
+      #degradation[t] <- abs(rnorm(1, 0, degradation_prior_sigma))
+      degradation[t] <- rlnorm(1, degradation_prior_mean, degradation_prior_sigma)
+
+      w[t] <- rnorm(1, 0, w_prior_sigma)
+      b_raw[t] <- rnorm(1, 0, b_prior_sigma)
+      b[t] <- b_raw[t] + intercept * w[t]
+      initial_condition[t] <- abs(rnorm(1, 0,initial_condition_prior_sigma))
+
+      if(integrate_ode45){
+        params <- c(degradation = degradation[t], bias = b_raw[t], sensitivity = sensitivity[t], weight = w[t], basal_transcription = 0, protein = approxfun(time, regulator_profile, rule=2));
+        expression_true[t,] <-  ode( y = c(x = initial_condition[t]), times = time, func = target_ODE, parms = params, method = "ode45")[,"x"];
+      } else {
+        expression_true[t,] <- numerical_integration(0, degradation[t], initial_condition[t], sensitivity[t], weight = w[t], bias = b_raw[t], regulator_profile, num_time)
+      }
+
+      if(all(expression_true[t,] > 0)
+         && sd(expression_true[t,]) > 1
+         #&& any(expression_true[t,] > 2 * measurement_sigma_absolute)
+         && mean(diff(expression_true[t,]) > 1e-2) > 0.2 #Avoid monotonicity
+         && mean(diff(expression_true[t,]) < 1e-2) > 0.2
+      ) {
+        break;
+      }
+      n_rejections <- n_rejections + 1
+    }
+    expression_observed[t,] <- rtruncnorm(length(measurement_times), mean = expression_true[t,measurement_times], sd =  measurement_sigma_absolute + measurement_sigma_relative * expression_true[t,measurement_times], a = 0)
+  }
+
+  cat(n_rejections, " rejections targets\n")
+
+  regulator_expression_true <- regulator_profile + intercept
+  regulator_expression_observed <- rtruncnorm(length(measurement_times), mean = regulator_expression_true[measurement_times], sd =  measurement_sigma_absolute + measurement_sigma_relative * regulator_expression_true[measurement_times], a = 0)
+
+  return(list(
+    true = list (
+      coeffs = coeffs,
+      regulator_profile = regulator_profile,
+      regulator_expression = regulator_expression_true,
+      w = w,
+      b = b,
+      initial_condition = initial_condition,
+      sensitivity = sensitivity,
+      expression = expression_true,
+      intercept = intercept,
+      degradation = degradation
+    ), observed = list(
+      num_time = num_time,
+      num_measurements = length(measurement_times),
+      num_targets = num_targets,
+      regulator_measured = if (regulator_measured) { 1 } else { 0 },
+      measurement_times = measurement_times,
+      num_knots = num_knots,
+      knots = knots,
+      spline_degree = spline_degree,
+      expression = expression_observed,
+      regulation_signs = sign(w),
+      regulator_expression = if (regulator_measured) { regulator_expression_observed } else { numeric(0) },
+      measurement_sigma_absolute = measurement_sigma_absolute,
+      measurement_sigma_relative = measurement_sigma_relative,
+      intercept_prior_sigma = intercept_prior_sigma,
+      initial_condition_prior_sigma = initial_condition_prior_sigma,
+      sensitivity_prior_sigma = sensitivity_prior_sigma,
+      degradation_prior_mean = degradation_prior_mean,
+      degradation_prior_sigma = degradation_prior_sigma,
+      w_prior_sigma = w_prior_sigma,
+      b_prior_sigma = b_prior_sigma,
+      scale = scale
+    )
+  ))
+}
 
 simulate_gp <- function(num_time = 101, measurement_times = seq(1, num_time, by = 10))
 {

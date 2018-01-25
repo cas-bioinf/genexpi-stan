@@ -33,30 +33,27 @@ evaluate_single_param_indices <- function(samples, param_name, indices, true_val
 evaluate_single_param <- function(samples, param_name, param_values)
 {
   result = list();
+  dimensions <- dim(samples[[param_name]])[-1] #The first dimension is the number of samples
+  num_dimensions <- length(dimensions)
   next_element = 1
-  if(is.null(dim(param_values)) || (length(dim(param_values)) == 1)) {
-    if(length(param_values) > 1) {
-      for(i in 1:length(param_values)) {
-        result[[next_element]] = evaluate_single_param_indices(samples, param_name, list(i), param_values[i])
-        next_element = next_element + 1
-      }
-    } else {
-      result[[next_element]] = evaluate_single_param_indices(samples, param_name, NULL, param_values)
+  if(num_dimensions == 0) {
+    result[[next_element]] = evaluate_single_param_indices(samples, param_name, NULL, param_values)
+    next_element = next_element + 1
+  } else if (num_dimensions == 1) {
+    for(i in 1:dimensions[1]) {
+      result[[next_element]] = evaluate_single_param_indices(samples, param_name, list(i), param_values[i])
       next_element = next_element + 1
     }
   }
-  else {
-    if(length(dim(param_values)) == 2)
-    {
-      for(i in 1:dim(param_values)[1]) {
-        for(j in 1:dim(param_values)[2]) {
+  else if(num_dimensions == 2) {
+      for(i in 1:dimensions[1]) {
+        for(j in 1:dimensions[2]) {
           result[[next_element]] = evaluate_single_param_indices(samples, param_name, list(i,j), param_values[i,j])
           next_element = next_element + 1
         }
       }
-    } else {
-      stop("3+ dimensional parameters not supported yet");
-    }
+  } else {
+    stop("3+ dimensional parameters not supported yet");
   }
   return(do.call(rbind.data.frame, result))
 }
