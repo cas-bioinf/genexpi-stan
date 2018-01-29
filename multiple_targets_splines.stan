@@ -202,3 +202,19 @@ model {
     w_raw ~ normal(0,w_prior_sigma);
     b_raw ~ normal(0,b_prior_sigma);
 }
+
+generated quantities {
+  vector<lower=0>[num_measurements] expression_replicates[num_targets];
+
+  for(m in 1:num_measurements) {
+    vector[num_targets] sigma = measurement_sigma_absolute + measurement_sigma_relative * predicted_expression[,measurement_times[m]];
+      for(t in 1:num_targets) {
+        while (1) {
+          expression_replicates[t,m] = normal_rng(predicted_expression[t,measurement_times[m]], sigma[t]);
+          if(expression_replicates[t,m] >= 0) {
+            break;
+          }
+        }
+      }
+  }
+}

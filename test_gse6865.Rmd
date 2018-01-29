@@ -178,22 +178,22 @@ multiple_targets_model <- stan_model(file = 'multiple_targets_splines.stan')
 
 ```{r}
 source <- "sigA"
-targets <- c("codY","clpQ","dnaA","yqxD","yfkJ","yhdL")#,, ,, "pyrB","purT")
+targets <- c("codY","clpQ","yqxD") #,"dnaA","yfkJ","yhdL", "pyrB","purT"
 
 data <- list(
-  num_time = length(smooth_time),
+  num_time = ceiling(length(smooth_time) / 2),
   num_measurements = length(gse6865_raw_time),
   num_targets = length(targets),
   regulator_measured = 0,
-  measurement_times = gse6865_raw_time + 1,
+  measurement_times = floor(gse6865_raw_time / 2) + 1,
   num_knots = num_knots,
-  knots = knots,
+  knots = knots / 2,
   spline_degree = 3,
   expression = gse6865_raw[targets,],
   regulator_expression = numeric(0),#gse6865_raw[source,],
   regulation_signs = array(1, length(targets)),
-  measurement_sigma_absolute = 0.5,
-  measurement_sigma_relative = 0.2,
+  measurement_sigma_absolute = 0.2,
+  measurement_sigma_relative = 0.1,
   intercept_prior_sigma = 0.01,
   initial_condition_prior_sigma = 0.05,
   sensitivity_prior_sigma = 1,
@@ -228,23 +228,24 @@ for(target in 1:length(targets)) {
 
 ```
 ```{r}
-source <- "sigA"
-targets <- c("codY","clpQ","dnaA","yqxD","yfkJ","yhdL")#,, ,, "pyrB","purT")
+#source <- "sigA"
+source <- "sigB"
+targets <- c("codY","clpQ","dnaA","yqxD","yfkJ","yhdL", "pyrB","purT")
 
 data <- list(
-  num_time = length(smooth_time),
+  num_time = ceiling(length(smooth_time) / 2),
   num_measurements = length(gse6865_raw_time),
   num_targets = length(targets),
   regulator_measured = 1,
-  measurement_times = gse6865_raw_time + 1,
+  measurement_times = floor(gse6865_raw_time / 2) + 1,
   num_knots = num_knots,
-  knots = knots,
+  knots = knots / 2,
   spline_degree = 3,
   expression = gse6865_raw[targets,],
   regulator_expression = gse6865_raw[source,],
   regulation_signs = array(1, length(targets)),
-  measurement_sigma_absolute = 0.5,
-  measurement_sigma_relative = 0.2,
+  measurement_sigma_absolute = 0.2,
+  measurement_sigma_relative = 0.1,
   intercept_prior_sigma = 2,
   initial_condition_prior_sigma = 0.05,
   sensitivity_prior_sigma = 1,

@@ -29,9 +29,9 @@ data.frame(time = 1:data$observed$num_time, regulator = data$true$regulator_expr
 ```
 
 ```{r}
-data <- simulate_multiple_targets_spline(3,31,5,seq(1,31,by = 3), 0.2, 0.2, regulator_measured = TRUE)
+data <- simulate_multiple_targets_spline(3,31,6,seq(1,31,by = 3), 0.2, 0.2, regulator_measured = TRUE)
 
-fit <- sampling(multiple_targets_model, data = data$observed, init = function(x) { data$true })
+fit <- sampling(multiple_targets_model, data = data$observed, control = list(adapt_delta = 0.95))
 evaluation_summary(rstan::extract(fit, c("coeffs","initial_condition","sensitivity","degradation", "intercept","w","b")), data$true, printParamsResults = TRUE)
  summary(fit)$summary[,c("n_eff","Rhat")] %>% as.data.frame() %>% summarise(min_n_eff = min(n_eff),max_Rhat = max(Rhat))
 

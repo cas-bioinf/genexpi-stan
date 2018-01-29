@@ -63,8 +63,6 @@ simulate_spline <- function(num_time, num_knots, measurement_times, measurement_
   time <- 1:num_time;
   #spline_variance <- rnorm(1,0,1)
 
-  #TODO: initial condition
-
   spline_degree = 3
   knots <- seq(from = 1, to = num_time, length.out = num_knots)
   spline_basis <- bs(1:num_time, knots = knots, degree = spline_degree)
