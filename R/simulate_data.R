@@ -7,6 +7,13 @@ target_ODE <- function(t, state, parameters, protein_transform = identity)
   })
 }
 
+constant_synthesis_ODE <- function(t, state, parameters) {
+  with(as.list(c(state, parameters)), {
+    dX = synthesis - degradation * x;
+    list(dX)
+  })
+}
+
 gp_covariance <- function(distance, gp_scale, gp_length, periodic = FALSE, period = 1) {
   if(periodic) {
     return((gp_scale^2) * exp(-2*(sin(3.141592 * abs(distance) / period)^2) / (gp_length ^ 2)))
@@ -57,107 +64,6 @@ plot_random_profiles <- function(n, time, scale, length, true_time = time, true_
     result = result + geom_point(data = data.frame(x = true_time, y = true_profile), aes(x=x, y=y))
   }
   return(result)
-}
-
-simulate_spline <- function(num_time, num_knots, measurement_times, measurement_sigma_absolute, measurement_sigma_relative, integrate_ode45 = TRUE) {
-  time <- 1:num_time;
-  #spline_variance <- rnorm(1,0,1)
-
-  spline_degree = 3
-  knots <- seq(from = 1, to = num_time, length.out = num_knots)
-  spline_basis <- bs(1:num_time, knots = knots, degree = spline_degree)
-
-  num_coeff <- dim(spline_basis)[2] - 1
-  if(any(spline_basis[,num_coeff + 1] != 0)) {
-    stop("Broken assumption of zero column in bs output")
-  }
-  spline_basis = spline_basis[,1:num_coeff]
-
-  coeffs <- rnorm(num_coeff, 0, 1)
-  intercept <- rnorm(1, 0, 1)
-
-  scale_prior_sigma = 5
-  #scale <- abs(rnorm(1, 0, scale_prior_sigma))
-  #min_scale <- 0.5
-  scale <- 5
-
-  regulator_profile <- array((spline_basis %*% coeffs)  * scale + intercept, num_time)
-
-  sensitivity_prior_sigma <-  1
-  sensitivity <- abs(rnorm(1, 0, sensitivity_prior_sigma))
-
-  #degradation_over_sensitivity <- rlnorm(1,0,1)
-  #degradation <- degradation_over_sensitivity * sensitivity;
-  degradation_prior_sigma <- 0.3
-  degradation <- abs(rnorm(1,0, degradation_prior_sigma))
-
-
-
-  expression_true <- array(-1, num_time)
-
-  initial_condition_prior_sigma <- 1
-  initial_condition <- abs(rnorm(1,0,initial_condition_prior_sigma))
-
-  if(integrate_ode45){
-    params <- c(degradation = degradation, bias = 0, sensitivity = sensitivity, weight = 1, basal_transcription = 0, protein = approxfun(time, regulator_profile, rule=2));
-    expression_true <-  ode( y = c(x = initial_condition), times = time, func = target_ODE, parms = params, method = "ode45")[,"x"];
-  } else {
-    expression_true <- numerical_integration(0, degradation, initial_condition, sensitivity, weight = 1, bias = 0, regulator_profile, num_time)
-  }
-
-  #expression_observed <- exp(rnorm(length(measurement_times), log(expression_true[measurement_times]), measurement_sigma))
-  expression_observed <- rtruncnorm(length(measurement_times), mean = expression_true[measurement_times], sd =  measurement_sigma_absolute + measurement_sigma_relative * expression_true[measurement_times], a = 0)
-
-  #Handle regulator
-  w_prior_sigma <- 1
-  b_prior_sigma <- 5
-  inv_w <- rlnorm(1,0,w_prior_sigma)
-
-  # if (w > 0) {
-  #   max_b <- min(expression_true)
-  #   b <- rtruncnorm(1, mean = 0, sd = b_prior_sigma, b = max_b)
-  # } else {
-  #   min_b <- max(expression_true)
-  #   b <- rtruncnorm(1, mean = 0, sd = b_prior_sigma, a = min_b)
-  # }
-  min_b <- -min(inv_w * regulator_profile)
-  b_raw <- abs(rnorm(1,0,b_prior_sigma))
-  regulator_expression_true <- regulator_profile * inv_w + min_b + b_raw
-  w <- 1/inv_w;
-  b <- -(min_b + b_raw) / inv_w;
-  regulator_expression_observed <- rtruncnorm(length(measurement_times), mean = regulator_expression_true[measurement_times], sd =  measurement_sigma_absolute + measurement_sigma_relative * regulator_expression_true[measurement_times], a = 0)
-
-  return(list(
-    true = list (
-      coeffs = coeffs,
-      regulator_profile = regulator_profile,
-      regulator_expression = regulator_expression_true,
-      w = w,
-      b = b,
-      initial_condition = initial_condition,
-      sensitivity = sensitivity,
-      expression = expression_true,
-      intercept = intercept,
-      degradation = degradation
-    ), observed = list(
-      num_time = num_time,
-      num_measurements = length(measurement_times),
-      measurement_times = measurement_times,
-      num_knots = num_knots,
-      knots = knots,
-      spline_degree = spline_degree,
-      expression = expression_observed,
-      regulator_expression = regulator_expression_observed,
-      measurement_sigma_absolute = measurement_sigma_absolute,
-      measurement_sigma_relative = measurement_sigma_relative,
-      initial_condition_prior_sigma = initial_condition_prior_sigma,
-      sensitivity_prior_sigma = sensitivity_prior_sigma,
-      degradation_prior_sigma = degradation_prior_sigma,
-      w_prior_sigma = w_prior_sigma,
-      b_prior_sigma = b_prior_sigma,
-      scale = scale
-    )
-  ))
 }
 
 
@@ -307,65 +213,67 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
   ))
 }
 
-simulate_gp <- function(num_time = 101, measurement_times = seq(1, num_time, by = 10))
-{
-  gp_length <- 3
-  gp_variance <- 1
 
-  time <-  1:num_time;
-
-  regulator_profile <- generate_random_profile(time, gp_variance, gp_length, positive_transform = FALSE) %>%
-    array(num_time) #Transform to 1D array
+simulate_constant_synthesis <- function(measurement_times, measurement_sigma_absolute, measurement_sigma_relative, integrate_ode45 = TRUE) {
 
 
 
-  initial_condition <-  exp(rnorm(1, -0.5,1));
-  basal_transcription <-  0;#exp(rnorm(numTargets, -0.8,0.2));
-  degradation <-  exp(rnorm(1, 2,1));
-  sensitivity <-  exp(rnorm(1, 2,1));
+  expression_true <- array(-1, length(measurement_times))
+  expression_observed <- array(-1, length(measurement_times))
 
-  #measurement_sigma <- abs(rcauchy(1,0,0.1)) + 0.00001
-  measurement_sigma <- 0.00001
+  synthesis_over_degradation_prior_mean <- 3
+  synthesis_over_degradation_prior_sigma <-  0.5
+  degradation_prior_mean <- -3
+  degradation_prior_sigma <- 1
+  initial_condition_prior_sigma <- 1
 
+  n_rejections <- 0
+  #Rejection sampling to have interesting profiles
+  repeat {
+    synthesis_over_degradation <- rlnorm(1,synthesis_over_degradation_prior_mean,synthesis_over_degradation_prior_sigma)
+    degradation <- rlnorm(1, degradation_prior_mean, degradation_prior_sigma)
+    synthesis = synthesis_over_degradation * degradation
 
-  expression_true <- array(0, c(num_time));
-  expression_observed = array(0, c(num_time));
+    initial_condition <- abs(rnorm(1, 0,initial_condition_prior_sigma))
 
-  while((sensitivity) / degradation < 0.5) {
-    degradation = exp(rnorm(1, 2,1));
-    sensitivity = exp(rnorm(1, 2,1));
+    if(integrate_ode45){
+      params <- c(degradation = degradation, synthesis = synthesis);
+      expression_true <-  ode( y = c(x = initial_condition), times = measurement_times, func = constant_synthesis_ODE, parms = params, method = "ode45")[,"x"];
+    } else {
+      expression_true <- numerical_integration(synthesis, degradation, initial_condition, 0, 0, 0, 0, max[measurement_times])[measurement_times]
+    }
+
+    if(all(expression_true > 0))
+    {
+      break;
+    }
+    n_rejections <- n_rejections + 1
   }
+  expression_observed <- rtruncnorm(length(measurement_times), mean = expression_true, sd =  measurement_sigma_absolute + measurement_sigma_relative * expression_true, a = 0)
 
-  #params <- c(degradation = degradation, bias = 0, sensitivity = sensitivity, weight = 1, basal_transcription = basal_transcription, protein = approxfun(time, regulator_profile, rule=2));
-  #expression_true <-  ode( y = c(x = initial_condition), times = time, func = target_ODE, parms = params, method = "ode45")[,"x"];
+  cat(n_rejections, " rejections targets\n")
 
-  expression_true <- numerical_integration(basal_transcription, degradation, initial_condition, sensitivity, 1, 0, regulator_profile, num_time)
-
-
-  expression_observed <- expression_true[measurement_times] + rnorm(length(measurement_times),0,measurement_sigma)
-  expression_observed[expression_observed < 0] <- 0
-
-
-  data <- list(
-    true = list(
-      expression_full = expression_true,
-      expression = expression_true[measurement_times],
-      regulator_profile = regulator_profile
-    ),
-    observed = list(
+  return(list(
+    true = list (
+      initial_condition = initial_condition,
+      synthesis_over_degradation = synthesis_over_degradation,
+      degradation = degradation,
+      expression = expression_true
+    ), observed = list(
       num_measurements = length(measurement_times),
-      num_time = num_time,
       measurement_times = measurement_times,
       expression = expression_observed,
-      gp_length = gp_length,
-      gp_variance = gp_variance,
-      measurement_sigma = measurement_sigma,
-      initial_condition = initial_condition,
-      degradation = degradation,
-      sensitivity = sensitivity
+      measurement_sigma_absolute = measurement_sigma_absolute,
+      measurement_sigma_relative = measurement_sigma_relative,
+      initial_condition_prior_sigma = initial_condition_prior_sigma,
+      synthesis_over_degradation_prior_mean = synthesis_over_degradation_prior_mean,
+      synthesis_over_degradation_prior_sigma = synthesis_over_degradation_prior_sigma,
+      degradation_prior_mean = degradation_prior_mean,
+      degradation_prior_sigma = degradation_prior_sigma
     )
-  )
+  ))
 }
+
 
 numerical_integration <- function(basal_transcription, degradation, initial_condition, sensitivity, weight, bias, protein, num_time){
 

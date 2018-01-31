@@ -57,6 +57,8 @@ multiple_targets_model <- stan_model(file = 'multiple_targets_splines.stan')
 ```
 
 #With known regulator
+
+TODO: test fitting measurement sigma when fitting only "good" targets
 ```{r}
 source <- "sigA"
 #source <- "sigB"
@@ -83,6 +85,8 @@ data <- list(
   measurement_sigma_relative = 0.1,
   intercept_prior_sigma = 2,
   initial_condition_prior_sigma = 0.05,
+  sensitivity_over_degradation_prior_mean = 2.5,
+  sensitivity_over_degradation_prior_sigma = 2,
   sensitivity_prior_sigma = 1,
   degradation_prior_mean = -3,
   degradation_prior_sigma = 1,
@@ -240,6 +244,59 @@ o <- order(looic)
 data.frame(order = (1:length(targets))[o],gene = targets[o], waic = waic[o], looic = looic[o])
 
 ```
+
+##Comparing to constant synthesis
+```{r}
+fits_csynth <- list()
+for(t in 1:length(targets)) {
+  
+  data <- list(
+    num_measurements = length(gse6865_raw_time),
+    measurement_times = gse6865_raw_time + 1,
+    expression = gse6865_raw[targets[t],],
+    measurement_sigma_absolute = 0.2,
+    measurement_sigma_relative = 0.1,
+    initial_condition_prior_sigma = 0.05,
+    synthesis_over_degradation_prior_mean = 2,
+    synthesis_over_degradation_prior_sigma = 1,
+    degradation_prior_mean = -3,
+    degradation_prior_sigma = 1
+  )  
+  fit_csynth <- sampling(csynth_model, data = data, control = list(adapt_delta = 0.95))
+   summary(fit_csynth)$summary[,c("n_eff","Rhat")] %>% as.data.frame() %>% summarise(min_n_eff = min(n_eff),max_Rhat = max(Rhat))
+  
+  num_samples <- 100
+  main_geom <- geom_line(alpha = 0.2)
+  samples_to_show <-  sample(1:4000, num_samples)
+  
+  
+  samples_expression <- rstan::extract(fit_csynth,"predicted_expression")$predicted_expression[samples_to_show,]
+  print(ggmatplot(data$measurement_times, t(samples_expression), main_geom = main_geom) + 
+    geom_point(data = data.frame(x = data$measurement_times,  y = data$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(targets[t]))
+  
+  samples_replicates <- rstan::extract(fit_csynth,"expression_replicates")$expression_replicates[samples_to_show,]
+  print(ggmatplot(data$measurement_times, t(samples_replicates), main_geom = main_geom) +
+    geom_point(data = data.frame(x = data$measurement_times,  y = data$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(targets[t]))
+  
+  fits_csynth[[t]] <- fit_csynth
+}
+```
+```{r}
+
+looic <- array(-1,length(targets))
+waic <- array(-1,length(targets))
+for(t in 1:length(targets)) {
+  samples_log_lik <- rstan::extract(fits_csynth[[t]], "log_likelihood")$log_likelihood
+  lik_data <- samples_log_lik
+  loo_res <- loo(lik_data)
+  looic[t] <- loo_res$looic
+  waic[t] <- waic(lik_data)$waic
+}
+o <- order(looic)
+data.frame(order = (1:length(targets))[o],gene = targets[o], waic = waic[o], looic = looic[o])
+
+```
+
 
 ##Without known regulator
 
