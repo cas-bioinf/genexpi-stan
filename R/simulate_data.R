@@ -281,6 +281,11 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
       num_measurements = length(measurement_times),
       num_targets = num_targets,
       regulator_measured = if (regulator_measured) { 1 } else { 0 },
+
+      coeffs_prior_given = 0, #No coeffs prior. Sadly have to give at least size 1
+      coeffs_prior_mean = array(0.0,1),
+      coeffs_prior_cov = array(1, c(1,1)),
+
       measurement_times = measurement_times,
       num_knots = num_knots,
       knots = knots,

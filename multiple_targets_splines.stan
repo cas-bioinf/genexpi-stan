@@ -28,11 +28,23 @@ functions {
     return b_spline;
   }
 
+  int count_num_basis(int num_knots, int spline_degree) {
+    return num_knots + spline_degree - 1;
+  }
+
   int regulator_expression_size(int regulator_measured, int num_measurements) {
     if (regulator_measured == 0) {
       return 0;
     } else {
       return num_measurements;
+    }
+  }
+
+  int coeffs_prior_size(int coeffs_prior_given, int num_knots, int spline_degree) {
+    if(coeffs_prior_given == 0) {
+      return 1;
+    } else {
+      return count_num_basis(num_knots, spline_degree);
     }
   }
 }
@@ -52,6 +64,11 @@ data {
   vector[num_knots] knots;  // the sequence of knots
   int spline_degree;        // the degree of spline (is equal to order - 1)
 
+
+  int<lower=0,upper=1> coeffs_prior_given;
+  vector[coeffs_prior_size(coeffs_prior_given, num_knots, spline_degree)] coeffs_prior_mean;
+  cov_matrix[coeffs_prior_size(coeffs_prior_given, num_knots, spline_degree)] coeffs_prior_cov;
+
   real<lower=0> measurement_sigma_relative;
   real<lower=0> measurement_sigma_absolute;
 
@@ -67,13 +84,19 @@ data {
 }
 
 transformed data {
-  int num_basis = num_knots + spline_degree - 1; // total number of B-splines
+  int num_basis = count_num_basis(num_knots, spline_degree); // total number of B-splines
   matrix[num_basis, num_time] B;  // matrix of B-splines
   vector[spline_degree + num_knots] ext_knots_temp;
   vector[2*spline_degree + num_knots] ext_knots; // set of extended knots
   real time_real[num_time];
   vector[num_targets] regulation_signs_real;
   vector<lower=0>[num_targets] basal_transcription;
+
+  cholesky_factor_cov[coeffs_prior_size(coeffs_prior_given, num_knots, spline_degree)] coeffs_prior_chol_cov = cholesky_decompose(coeffs_prior_cov);
+
+  if(regulator_measured != 0 && coeffs_prior_given != 0) {
+    reject("You are not supposed to give coeffs prior if regulator is measured. Use scale parameter instead.");
+  }
 
   for(i in 1:num_time) {
     time_real[i] = i;
@@ -101,6 +124,8 @@ transformed data {
   }
   B[num_basis, num_time] = 1;
 
+  B = B * scale;
+
   for(t in 1:num_targets) {
     basal_transcription[t] = 0;
   }
@@ -121,14 +146,20 @@ parameters {
 
 transformed parameters {
   vector[num_time] regulator_profile;
-  matrix[num_targets,num_time] predicted_expression;
+  matrix<lower=0>[num_targets,num_time] predicted_expression;
   vector<lower=0>[num_time] predicted_regulator_expression;
   vector[num_targets] b;
   vector[num_targets] w;
   real intercept;
 
   w = w_raw .* regulation_signs_real;
-  regulator_profile = to_vector(coeffs*B) * scale;
+  if(coeffs_prior_given == 0) {
+    regulator_profile = to_vector(coeffs * B) ;
+  } else {
+    row_vector[num_basis] coeffs_transformed = to_row_vector(coeffs_prior_chol_cov * to_vector(coeffs) + coeffs_prior_mean);
+
+    regulator_profile = to_vector(coeffs_transformed * B);
+  }
   {
     real min_intercept = -min(regulator_profile);
     if(regulator_measured == 0) {
@@ -166,14 +197,6 @@ transformed parameters {
 
       }
     }
-
-/*
-    predicted_expression[1] = initial_condition;
-    for (i in 2:num_time)
-    {
-      predicted_expression[i] = predicted_expression[i - 1]* (1 - degradation) + sensitivity/( 1 + exp(-regulator_profile[i]));
-    }
-*/
   }
 }
 
@@ -183,11 +206,13 @@ model {
     //Observation model
     for(m in 1:num_measurements) {
       vector[num_targets] sigma = measurement_sigma_absolute + measurement_sigma_relative * predicted_expression[,measurement_times[m]];
-      expression[,m] ~ normal(predicted_expression[,measurement_times[m]], sigma);
+      for(t in 1:num_targets) {
+        expression[t, m] ~ normal(predicted_expression[t,measurement_times[m]], sigma[t]) T[0,];
+      }
 
       if(regulator_measured != 0) {
-        real sigma_regulator = measurement_sigma_absolute + measurement_sigma_relative * fabs(predicted_regulator_expression[measurement_times[m]]);
-        regulator_expression[m] ~ normal(predicted_regulator_expression[measurement_times[m]], sigma_regulator);
+        real sigma_regulator = measurement_sigma_absolute + measurement_sigma_relative * predicted_regulator_expression[measurement_times[m]];
+        regulator_expression[m] ~ normal(predicted_regulator_expression[measurement_times[m]], sigma_regulator)  T[0,];
       }
       //log(expression[m]) ~ normal(log(predicted_expression[measurement_times[m]]), measurement_sigma);
     }
@@ -205,16 +230,25 @@ model {
 
 generated quantities {
   vector<lower=0>[num_measurements] expression_replicates[num_targets];
+  vector[num_measurements] log_likelihood[num_targets];
 
   for(m in 1:num_measurements) {
     vector[num_targets] sigma = measurement_sigma_absolute + measurement_sigma_relative * predicted_expression[,measurement_times[m]];
-      for(t in 1:num_targets) {
-        while (1) {
-          expression_replicates[t,m] = normal_rng(predicted_expression[t,measurement_times[m]], sigma[t]);
-          if(expression_replicates[t,m] >= 0) {
-            break;
-          }
+    for(t in 1:num_targets) {
+      //Draw from the truncated normal
+      real lower_bound = 0;
+      real p = normal_cdf(lower_bound, predicted_expression[t,measurement_times[m]], sigma[t]);
+      real u = uniform_rng(p, 1);
+      expression_replicates[t,m] = inv_Phi(u) * sigma[t] + predicted_expression[t,measurement_times[m]];
+
+      log_likelihood[t,m] = normal_lpdf(expression[t,m]| predicted_expression[t,measurement_times[m]], sigma[t]) - log_diff_exp(1, normal_lcdf(lower_bound | predicted_expression[t,measurement_times[m]], sigma[t]));
+      /*
+      while (1) {
+        expression_replicates[t,m] = normal_rng(predicted_expression[t,measurement_times[m]], sigma[t]);
+        if(expression_replicates[t,m] >= 0) {
+          break;
         }
-      }
+      }*/
+    }
   }
 }
