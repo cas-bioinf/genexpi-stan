@@ -41,7 +41,7 @@ model {
     }
 
     initial_condition ~ normal(0, initial_condition_prior_sigma);
-    synthesis_over_degradation ~ lognormal(synthesis_over_degradation_prior_mean, synthesis_over_degradation_prior_sigma);
+    synthesis_over_degradation ~ normal(synthesis_over_degradation_prior_mean, synthesis_over_degradation_prior_sigma) T[0,];
     degradation ~ lognormal(degradation_prior_mean, degradation_prior_sigma);
 }
 

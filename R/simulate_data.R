@@ -222,7 +222,7 @@ simulate_constant_synthesis <- function(measurement_times, measurement_sigma_abs
   expression_observed <- array(-1, length(measurement_times))
 
   synthesis_over_degradation_prior_mean <- 3
-  synthesis_over_degradation_prior_sigma <-  0.5
+  synthesis_over_degradation_prior_sigma <-  3
   degradation_prior_mean <- -3
   degradation_prior_sigma <- 1
   initial_condition_prior_sigma <- 1
@@ -230,7 +230,7 @@ simulate_constant_synthesis <- function(measurement_times, measurement_sigma_abs
   n_rejections <- 0
   #Rejection sampling to have interesting profiles
   repeat {
-    synthesis_over_degradation <- rlnorm(1,synthesis_over_degradation_prior_mean,synthesis_over_degradation_prior_sigma)
+    synthesis_over_degradation <- rnorm(1,synthesis_over_degradation_prior_mean,synthesis_over_degradation_prior_sigma)
     degradation <- rlnorm(1, degradation_prior_mean, degradation_prior_sigma)
     synthesis = synthesis_over_degradation * degradation
 

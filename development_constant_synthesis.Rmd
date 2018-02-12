@@ -12,7 +12,7 @@ library(bayesplot)
 library(shinystan)
 ```
 
-
+TODO: synthesis/degradation je asymptota, dává smysl na ní mít normal prior.
 
 ```{r}
 csynth_model <- stan_model(file = 'constant_synthesis.stan')

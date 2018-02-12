@@ -7,7 +7,8 @@ output: html_notebook
 ```{r setup}
 library(rstan)
 rstan_options(auto_write = TRUE)
-options(mc.cores = parallel::detectCores())
+#options(mc.cores = parallel::detectCores())
+options(mc.cores = 3)
 library(tidyverse)
 library(loo)
 library(MVN)
@@ -122,6 +123,60 @@ for(target in 1:length(targets)) {
 }
 ```
 
+##Show splining if no target info was used
+```{r}
+source <- "sigA"
+#source <- "sigB"
+targets <- c()
+
+data <- list(
+  num_time = ceiling(length(smooth_time) / 2),
+  num_measurements = length(gse6865_raw_time),
+  num_targets = length(targets),
+  regulator_measured = 1,
+  
+  coeffs_prior_given = 0, #No coeffs prior. Sadly have to give at least size 1
+  coeffs_prior_mean = array(0.0,1),
+  coeffs_prior_cov = array(1, c(1,1)),
+  
+  measurement_times = floor(gse6865_raw_time / 2) + 1,
+  num_knots = num_knots,
+  knots = knots / 2,
+  spline_degree = 3,
+  expression = gse6865_raw[targets,],
+  regulator_expression = gse6865_raw[source,],
+  regulation_signs = array(1, length(targets)),
+  measurement_sigma_absolute = 0.2,
+  measurement_sigma_relative = 0.1,
+  intercept_prior_sigma = 2,
+  initial_condition_prior_sigma = 0.05,
+  sensitivity_over_degradation_prior_mean = 2.5,
+  sensitivity_over_degradation_prior_sigma = 2,
+  sensitivity_prior_sigma = 1,
+  degradation_prior_mean = -3,
+  degradation_prior_sigma = 1,
+  w_prior_sigma = 2,
+  b_prior_sigma = 5,
+  scale = 5
+)
+
+fit <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
+print(summary(fit, pars = c("coeffs", "intercept","initial_condition","sensitivity","degradation","w","b"))$summary)
+
+num_samples <- 100
+main_geom <- geom_line(alpha = 0.2)
+samples_to_show <-  sample(1:4000, num_samples)
+samples_regulator <- rstan::extract(fit,"predicted_regulator_expression")$predicted_regulator_expression[samples_to_show,]
+
+regulator_plot <- ggmatplot(1:data$num_time, t(samples_regulator), main_geom = main_geom) + ggtitle(paste0("Regulator - ", source))
+
+if(data$regulator_measured != 0) {
+  regulator_plot <- regulator_plot + geom_point(data = data.frame(x = data$measurement_times,  y = data$regulator_expression), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3)
+}
+print(regulator_plot)
+```
+
+
 ##Checking whether resulting coeffs are approximately multivariate normal
 
 ```{r}
@@ -167,8 +222,8 @@ for(i in 1:(n_coeffs - 1)) {
 source <- "sigA"
 #source <- "sigB"
 #targets <- c("yfkJ")
-#targets <- c("yqxD","yfkJ","pyrB","purT")
-targets <- c("jag","kinC","kinE","lepA")
+targets <- c("yqxD","yfkJ","pyrB","purT")
+#targets <- c("jag","kinC","kinE","lepA")
 
 
 fits <- list()
@@ -227,7 +282,7 @@ for(t in 1:length(targets)) {
   fits[[t]] <- fit   
 }
 ```
-
+TODO: zkorelovat WAIC vs. sum sq.
 
 ```{r}
 
@@ -247,6 +302,10 @@ data.frame(order = (1:length(targets))[o],gene = targets[o], waic = waic[o], loo
 
 ##Comparing to constant synthesis
 ```{r}
+csynth_model <- stan_model(file = 'constant_synthesis.stan')
+```
+
+```{r}
 fits_csynth <- list()
 for(t in 1:length(targets)) {
   
@@ -257,8 +316,8 @@ for(t in 1:length(targets)) {
     measurement_sigma_absolute = 0.2,
     measurement_sigma_relative = 0.1,
     initial_condition_prior_sigma = 0.05,
-    synthesis_over_degradation_prior_mean = 2,
-    synthesis_over_degradation_prior_sigma = 1,
+    synthesis_over_degradation_prior_mean = 0,
+    synthesis_over_degradation_prior_sigma = 15,
     degradation_prior_mean = -3,
     degradation_prior_sigma = 1
   )  
