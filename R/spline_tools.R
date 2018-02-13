@@ -6,11 +6,14 @@ spline_profile_matrix <- function(profile_matrix, time, targetTime, df = NULL, k
   spline_basis = bs(time, df = df, knots = knots, degree = degree)
 
   #There is a zero-only last column in the basis and it sometimes breaks things, so we have to remove it
-  num_coeff <- dim(spline_basis)[2] - 1
-  if(any(spline_basis[,num_coeff + 1] != 0)) {
-    stop("Broken assumption of zero column in bs output")
+  last_column <- dim(spline_basis)[2]
+  if(all(spline_basis[,last_column] == 0)) {
+    num_coeff <- last_column - 1
+    spline_basis_coeffs = spline_basis[,1:num_coeff]
+  } else {
+    num_coeff <- last_column
+    spline_basis_coeffs = spline_basis
   }
-  spline_basis_coeffs = spline_basis[,1:num_coeff]
 
   #Use a least-squares fit of a B-spline basis
   spline_fit <- lm(t(profile_matrix) ~ 0 + spline_basis_coeffs); #Without intercept

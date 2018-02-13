@@ -193,9 +193,10 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
       coeffs_prior_cov = array(1, c(1,1)),
 
       measurement_times = measurement_times,
-      num_knots = num_knots,
-      knots = knots,
-      spline_degree = spline_degree,
+
+      num_spline_basis = num_coeff,
+      spline_basis = t(spline_basis),
+
       expression = expression_observed,
       regulation_signs = sign(w),
       regulator_expression = if (regulator_measured) { regulator_expression_observed } else { numeric(0) },

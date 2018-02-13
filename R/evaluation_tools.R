@@ -155,3 +155,10 @@ averageSamplingTime <- function(fits)
   sampleTimes = allTimes[,"sample"]
   return(list(total = mean(warmupTimes + sampleTimes), sample = mean(sampleTimes)))
 }
+
+
+launch_shinystan_nonblocking <- function(fit) {
+  library(future)
+  plan(multisession)
+  future(launch_shinystan(fit))
+}

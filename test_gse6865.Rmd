@@ -46,10 +46,12 @@ rm(temp)
 
 ```
 ```{r}
-num_knots <- 5
-smooth_time  <- 0:100
-knots <- quantile(gse6865_raw_time + 1, probs = seq(0, 1, length.out = num_knots))
-gse6865_splined <- spline_profile_matrix(gse6865_raw, gse6865_raw_time, smooth_time, knots = knots)
+measurement_times = floor(gse6865_raw_time / 2) + 1
+smooth_time  <- seq(0,100, by = 2)
+spline_df <- 6
+spline_basis <- t(bs(smooth_time, degree = 3, df = spline_df))
+num_spline_basis <- dim(spline_basis)[1]
+gse6865_splined <- spline_profile_matrix(gse6865_raw, gse6865_raw_time, smooth_time, df = spline_df)
 ```
 
 #Multiple targets model
@@ -59,14 +61,14 @@ multiple_targets_model <- stan_model(file = 'multiple_targets_splines.stan')
 
 #With known regulator
 
-TODO: test fitting measurement sigma when fitting only "good" targets
+##Show splining if no target info was used
 ```{r}
 source <- "sigA"
 #source <- "sigB"
-targets <- c("codY","clpQ","yqxD","yhdL", "comA","codV","comEB", "dnaG", "ftsA","hemD" )
+targets <- c()
 
 data <- list(
-  num_time = ceiling(length(smooth_time) / 2),
+  num_time = length(smooth_time),
   num_measurements = length(gse6865_raw_time),
   num_targets = length(targets),
   regulator_measured = 1,
@@ -75,10 +77,62 @@ data <- list(
   coeffs_prior_mean = array(0.0,1),
   coeffs_prior_cov = array(1, c(1,1)),
   
-  measurement_times = floor(gse6865_raw_time / 2) + 1,
-  num_knots = num_knots,
-  knots = knots / 2,
-  spline_degree = 3,
+  measurement_times = measurement_times,
+  num_spline_basis = num_spline_basis,
+  spline_basis = spline_basis,
+  expression = gse6865_raw[targets,],
+  regulator_expression = gse6865_raw[source,],
+  regulation_signs = array(1, length(targets)),
+  measurement_sigma_absolute = 0.2,
+  measurement_sigma_relative = 0.1,
+  intercept_prior_sigma = 2,
+  initial_condition_prior_sigma = 0.05,
+  sensitivity_over_degradation_prior_mean = 2.5,
+  sensitivity_over_degradation_prior_sigma = 2,
+  sensitivity_prior_sigma = 1,
+  degradation_prior_mean = -3,
+  degradation_prior_sigma = 1,
+  w_prior_sigma = 2,
+  b_prior_sigma = 5,
+  scale = 5
+)
+
+fit <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
+print(summary(fit, pars = c("coeffs", "intercept","initial_condition","sensitivity","degradation","w","b"))$summary)
+
+num_samples <- 100
+main_geom <- geom_line(alpha = 0.2)
+samples_to_show <-  sample(1:4000, num_samples)
+samples_regulator <- rstan::extract(fit,"predicted_regulator_expression")$predicted_regulator_expression[samples_to_show,]
+
+regulator_plot <- ggmatplot(1:data$num_time, t(samples_regulator), main_geom = main_geom) + ggtitle(paste0("Regulator - ", source))
+
+if(data$regulator_measured != 0) {
+  regulator_plot <- regulator_plot + geom_point(data = data.frame(x = data$measurement_times,  y = data$regulator_expression), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3)
+}
+print(regulator_plot)
+```
+
+# Improved splining where target info is use
+
+```{r}
+source <- "sigA"
+#source <- "sigB"
+targets <- c("codY","clpQ","yqxD","yhdL", "comA","codV","comEB", "dnaG", "ftsA","hemD" )
+
+data <- list(
+  num_time = length(smooth_time),
+  num_measurements = length(gse6865_raw_time),
+  num_targets = length(targets),
+  regulator_measured = 1,
+  
+  coeffs_prior_given = 0, #No coeffs prior. Sadly have to give at least size 1
+  coeffs_prior_mean = array(0.0,1),
+  coeffs_prior_cov = array(1, c(1,1)),
+  
+  measurement_times = measurement_times,
+  num_spline_basis = num_spline_basis,
+  spline_basis = spline_basis,
   expression = gse6865_raw[targets,],
   regulator_expression = gse6865_raw[source,],
   regulation_signs = array(1, length(targets)),
@@ -123,58 +177,7 @@ for(target in 1:length(targets)) {
 }
 ```
 
-##Show splining if no target info was used
-```{r}
-source <- "sigA"
-#source <- "sigB"
-targets <- c()
 
-data <- list(
-  num_time = ceiling(length(smooth_time) / 2),
-  num_measurements = length(gse6865_raw_time),
-  num_targets = length(targets),
-  regulator_measured = 1,
-  
-  coeffs_prior_given = 0, #No coeffs prior. Sadly have to give at least size 1
-  coeffs_prior_mean = array(0.0,1),
-  coeffs_prior_cov = array(1, c(1,1)),
-  
-  measurement_times = floor(gse6865_raw_time / 2) + 1,
-  num_knots = num_knots,
-  knots = knots / 2,
-  spline_degree = 3,
-  expression = gse6865_raw[targets,],
-  regulator_expression = gse6865_raw[source,],
-  regulation_signs = array(1, length(targets)),
-  measurement_sigma_absolute = 0.2,
-  measurement_sigma_relative = 0.1,
-  intercept_prior_sigma = 2,
-  initial_condition_prior_sigma = 0.05,
-  sensitivity_over_degradation_prior_mean = 2.5,
-  sensitivity_over_degradation_prior_sigma = 2,
-  sensitivity_prior_sigma = 1,
-  degradation_prior_mean = -3,
-  degradation_prior_sigma = 1,
-  w_prior_sigma = 2,
-  b_prior_sigma = 5,
-  scale = 5
-)
-
-fit <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
-print(summary(fit, pars = c("coeffs", "intercept","initial_condition","sensitivity","degradation","w","b"))$summary)
-
-num_samples <- 100
-main_geom <- geom_line(alpha = 0.2)
-samples_to_show <-  sample(1:4000, num_samples)
-samples_regulator <- rstan::extract(fit,"predicted_regulator_expression")$predicted_regulator_expression[samples_to_show,]
-
-regulator_plot <- ggmatplot(1:data$num_time, t(samples_regulator), main_geom = main_geom) + ggtitle(paste0("Regulator - ", source))
-
-if(data$regulator_measured != 0) {
-  regulator_plot <- regulator_plot + geom_point(data = data.frame(x = data$measurement_times,  y = data$regulator_expression), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3)
-}
-print(regulator_plot)
-```
 
 
 ##Checking whether resulting coeffs are approximately multivariate normal
@@ -231,7 +234,7 @@ for(t in 1:length(targets)) {
   cat("\n==== Target: ", targets[t],"\n")
   
   data <- list(
-    num_time = ceiling(length(smooth_time) / 2),
+    num_time = length(smooth_time),
     num_measurements = length(gse6865_raw_time),
     num_targets = 1,
     regulator_measured = 0,
@@ -240,10 +243,10 @@ for(t in 1:length(targets)) {
     coeffs_prior_mean = coeffs_prior_mean,
     coeffs_prior_cov = coeffs_prior_cov,
     
-    measurement_times = floor(gse6865_raw_time / 2) + 1,
-    num_knots = num_knots,
-    knots = knots / 2,
-    spline_degree = 3,
+    measurement_times = measurement_times,
+    num_spline_basis = num_spline_basis,
+    spline_basis = spline_basis,
+
     expression = gse6865_raw[targets[t],,drop=FALSE],
     regulator_expression = numeric(0),
     regulation_signs = array(1, 1),

@@ -1,52 +1,9 @@
-//Spline code from https://github.com/milkha/Splines_in_Stan/blob/master/b_spline.stan
-
 functions {
-  vector build_b_spline(real[] t, real[] ext_knots, int ind, int order);
-  vector build_b_spline(real[] t, real[] ext_knots, int ind, int order) {
-    // INPUTS:
-    //    t:          the points at which the b_spline is calculated
-    //    ext_knots:  the set of extended knots
-    //    ind:        the index of the b_spline
-    //    order:      the order of the b-spline
-    vector[size(t)] b_spline;
-    vector[size(t)] w1 = rep_vector(0, size(t));
-    vector[size(t)] w2 = rep_vector(0, size(t));
-    if (order==1)
-      for (i in 1:size(t)) // B-splines of order 1 are piece-wise constant
-        b_spline[i] = (ext_knots[ind] <= t[i]) && (t[i] < ext_knots[ind+1]);
-    else {
-      if (ext_knots[ind] != ext_knots[ind+order-1])
-        w1 = (to_vector(t) - rep_vector(ext_knots[ind], size(t))) /
-             (ext_knots[ind+order-1] - ext_knots[ind]);
-      if (ext_knots[ind+1] != ext_knots[ind+order])
-        w2 = 1 - (to_vector(t) - rep_vector(ext_knots[ind+1], size(t))) /
-                 (ext_knots[ind+order] - ext_knots[ind+1]);
-      // Calculating the B-spline recursively as linear interpolation of two lower-order splines
-      b_spline = w1 .* build_b_spline(t, ext_knots, ind, order-1) +
-                 w2 .* build_b_spline(t, ext_knots, ind+1, order-1);
-    }
-    return b_spline;
+  int coeffs_prior_size(int coeffs_prior_given, int num_spline_basis) {
+    return coeffs_prior_given ? num_spline_basis : 1;
   }
 
-  int count_num_basis(int num_knots, int spline_degree) {
-    return num_knots + spline_degree - 1;
-  }
 
-  int regulator_expression_size(int regulator_measured, int num_measurements) {
-    if (regulator_measured == 0) {
-      return 0;
-    } else {
-      return num_measurements;
-    }
-  }
-
-  int coeffs_prior_size(int coeffs_prior_given, int num_knots, int spline_degree) {
-    if(coeffs_prior_given == 0) {
-      return 1;
-    } else {
-      return count_num_basis(num_knots, spline_degree);
-    }
-  }
 }
 
 data {
@@ -56,18 +13,17 @@ data {
   int<lower=1,upper=num_time> measurement_times[num_measurements];
   int<lower=0,upper=1> regulator_measured;
 
-  vector<lower=0>[regulator_expression_size(regulator_measured, num_measurements)] regulator_expression;
+  vector<lower=0>[regulator_measured ? num_measurements : 0] regulator_expression;
   vector<lower=0>[num_measurements] expression[num_targets];
   int<lower=-1,upper=1> regulation_signs[num_targets];
 
-  int num_knots;            // num of knots
-  vector[num_knots] knots;  // the sequence of knots
-  int spline_degree;        // the degree of spline (is equal to order - 1)
+  int num_spline_basis;
+  matrix[num_spline_basis, num_time] spline_basis;  // matrix of B-splines
 
 
   int<lower=0,upper=1> coeffs_prior_given;
-  vector[coeffs_prior_size(coeffs_prior_given, num_knots, spline_degree)] coeffs_prior_mean;
-  cov_matrix[coeffs_prior_size(coeffs_prior_given, num_knots, spline_degree)] coeffs_prior_cov;
+  vector[coeffs_prior_size(coeffs_prior_given, num_spline_basis)] coeffs_prior_mean;
+  cov_matrix[coeffs_prior_size(coeffs_prior_given, num_spline_basis)] coeffs_prior_cov;
 
   real<lower=0> measurement_sigma_relative;
   real<lower=0> measurement_sigma_absolute;
@@ -84,15 +40,12 @@ data {
 }
 
 transformed data {
-  int num_basis = count_num_basis(num_knots, spline_degree); // total number of B-splines
-  matrix[num_basis, num_time] B;  // matrix of B-splines
-  vector[spline_degree + num_knots] ext_knots_temp;
-  vector[2*spline_degree + num_knots] ext_knots; // set of extended knots
+  matrix[num_spline_basis, num_time] spline_basis_scaled;  // matrix of B-splines
   real time_real[num_time];
   vector[num_targets] regulation_signs_real;
   vector<lower=0>[num_targets] basal_transcription;
 
-  cholesky_factor_cov[coeffs_prior_size(coeffs_prior_given, num_knots, spline_degree)] coeffs_prior_chol_cov = cholesky_decompose(coeffs_prior_cov);
+  cholesky_factor_cov[coeffs_prior_size(coeffs_prior_given, num_spline_basis)] coeffs_prior_chol_cov = cholesky_decompose(coeffs_prior_cov);
 
   if(regulator_measured != 0 && coeffs_prior_given != 0) {
     reject("You are not supposed to give coeffs prior if regulator is measured. Use scale parameter instead.");
@@ -117,14 +70,8 @@ transformed data {
     }
   }
 
-  ext_knots_temp = append_row(rep_vector(knots[1], spline_degree), knots);
-  ext_knots = append_row(ext_knots_temp, rep_vector(knots[num_knots], spline_degree));
-  for (ind in 1:num_basis) {
-    B[ind,:] = to_row_vector(build_b_spline(time_real, to_array_1d(ext_knots), ind, spline_degree + 1));
-  }
-  B[num_basis, num_time] = 1;
 
-  B = B * scale;
+  spline_basis_scaled = spline_basis * scale;
 
   for(t in 1:num_targets) {
     basal_transcription[t] = 0;
@@ -133,7 +80,7 @@ transformed data {
 
 
 parameters {
-  row_vector[num_basis] coeffs;
+  row_vector[num_spline_basis] coeffs;
   vector<lower=0>[num_targets] initial_condition;
   vector<lower=0>[num_targets] sensitivity;
   vector<lower=0>[num_targets] degradation;
@@ -154,11 +101,11 @@ transformed parameters {
 
   w = w_raw .* regulation_signs_real;
   if(coeffs_prior_given == 0) {
-    regulator_profile = to_vector(coeffs * B) ;
+    regulator_profile = to_vector(coeffs * spline_basis_scaled) ;
   } else {
-    row_vector[num_basis] coeffs_transformed = to_row_vector(coeffs_prior_chol_cov * to_vector(coeffs) + coeffs_prior_mean);
+    row_vector[num_spline_basis] coeffs_transformed = to_row_vector(coeffs_prior_chol_cov * to_vector(coeffs) + coeffs_prior_mean);
 
-    regulator_profile = to_vector(coeffs_transformed * B);
+    regulator_profile = to_vector(coeffs_transformed * spline_basis_scaled);
   }
   {
     real min_intercept = -min(regulator_profile);
