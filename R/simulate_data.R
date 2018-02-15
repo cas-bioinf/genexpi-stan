@@ -114,13 +114,14 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
   expression_true <- array(-1, c(num_targets,num_time))
   expression_observed <- array(-1, c(num_targets,length(measurement_times)))
 
-  sensitivity_prior_sigma <-  1
+  mean_synthesis_prior_sigma <-  1
   degradation_prior_mean <- -3
   degradation_prior_sigma <- 1
   b_prior_sigma <- 2
   initial_condition_prior_sigma <- 1
   w_prior_sigma <- 2
 
+  #TODO: b_centered
   b_raw <- array(-Inf, num_targets)
   b <- array(-Inf, num_targets)
   w <- array(-Inf, num_targets)
@@ -133,7 +134,7 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
   for(t in 1:num_targets) {
     #Rejection sampling to have interesting profiles
     repeat {
-      sensitivity[t] <- abs(rnorm(1, 0, sensitivity_prior_sigma))
+      sensitivity[t] <- abs(rnorm(1, 0, mean_synthesis_prior_sigma))
 
       #degradation_over_sensitivity[t] <- rlnorm(1,0,1)
       #degradation[t] <- degradation_over_sensitivity[t] * sensitivity[t];
@@ -204,7 +205,7 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
       measurement_sigma_relative = measurement_sigma_relative,
       intercept_prior_sigma = intercept_prior_sigma,
       initial_condition_prior_sigma = initial_condition_prior_sigma,
-      sensitivity_prior_sigma = sensitivity_prior_sigma,
+      mean_synthesis_prior_sigma = mean_synthesis_prior_sigma,
       degradation_prior_mean = degradation_prior_mean,
       degradation_prior_sigma = degradation_prior_sigma,
       w_prior_sigma = w_prior_sigma,

@@ -29,12 +29,14 @@ data {
   real<lower=0> measurement_sigma_absolute;
 
   real<lower = 0> initial_condition_prior_sigma;
-  real<lower = 0> sensitivity_prior_sigma;
+  real<lower = 0> mean_synthesis_prior_sigma;
   real degradation_prior_mean;
   real<lower = 0> degradation_prior_sigma;
   real<lower = 0> w_prior_sigma;
   real<lower = 0> b_prior_sigma;
-  real<lower = 0> intercept_prior_sigma;
+
+  //Intercept is only important when regulator is measured, otherwise, it is hidden in b
+  real<lower = 0> intercept_prior_sigma[regulator_measured ? 1 : 0];
 
   real<lower=0> scale;
 }
@@ -82,12 +84,12 @@ transformed data {
 parameters {
   row_vector[num_spline_basis] coeffs;
   vector<lower=0>[num_targets] initial_condition;
-  vector<lower=0>[num_targets] sensitivity;
+  vector<lower=0>[num_targets] mean_synthesis;
   vector<lower=0>[num_targets] degradation;
   vector<lower=0>[num_targets] w_raw;
   vector[num_targets] b_raw;
   //real<lower=0> degradation_over_sensitivity;
-  real<lower = 0> intercept_raw;
+  real<lower = 0> intercept_raw[regulator_measured ? 1 : 0];
 }
 
 
@@ -95,8 +97,9 @@ transformed parameters {
   vector[num_time] regulator_profile;
   matrix<lower=0>[num_targets,num_time] predicted_expression;
   vector<lower=0>[num_time] predicted_regulator_expression;
-  vector[num_targets] b;
   vector[num_targets] w;
+  vector[num_targets] b_centered;
+  vector<lower=0>[num_targets] sensitivity;
   real intercept;
 
   w = w_raw .* regulation_signs_real;
@@ -112,20 +115,23 @@ transformed parameters {
     if(regulator_measured == 0) {
       intercept = min_intercept;
     } else {
-      intercept = min_intercept + intercept_raw;
+      intercept = min_intercept + intercept_raw[1];
     }
     predicted_regulator_expression = regulator_profile + intercept;
   }
-  b = b_raw + (intercept * w);
   for(t in 1:num_targets)
   {
     real basal_over_degradation = basal_transcription[t] / degradation[t];
     real degradation_per_step = exp(-degradation[t]);
 
     real residual;
+    vector[num_time] regulatory_input;
     vector[num_time] synthesis;
 
-    synthesis = inv(1 + exp(-regulator_profile * w[t] - b_raw[t]));
+    regulatory_input = regulator_profile * w[t];
+    b_centered[t] = b_raw[t] - mean(regulatory_input);
+    synthesis = inv(1 + exp(-regulatory_input - b_centered[t]));
+    sensitivity[t] = mean_synthesis[t] / mean(synthesis);
 
     predicted_expression[t,1] = initial_condition[t];
 
@@ -168,7 +174,7 @@ model {
     coeffs ~ normal(0,1); //coeffs are rescaled by the scale parameter
     //scale ~ normal(0,scale_prior_sigma);
     intercept_raw ~ normal(0,intercept_prior_sigma);
-    sensitivity ~ normal(0, sensitivity_prior_sigma);
+    mean_synthesis ~ normal(0, mean_synthesis_prior_sigma);
     //degradation_over_sensitivity ~ lognormal(0,1);
     degradation ~ lognormal(degradation_prior_mean, degradation_prior_sigma);
     w_raw ~ normal(0,w_prior_sigma);
@@ -178,6 +184,9 @@ model {
 generated quantities {
   vector<lower=0>[num_measurements] expression_replicates[num_targets];
   vector[num_measurements] log_likelihood[num_targets];
+  vector[num_targets] b;
+
+  b = b_centered + (intercept * w);
 
   for(m in 1:num_measurements) {
     vector[num_targets] sigma = measurement_sigma_absolute + measurement_sigma_relative * predicted_expression[,measurement_times[m]];

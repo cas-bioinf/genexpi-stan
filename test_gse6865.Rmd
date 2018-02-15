@@ -51,8 +51,19 @@ smooth_time  <- seq(0,100, by = 2)
 spline_df <- 6
 spline_basis <- t(bs(smooth_time, degree = 3, df = spline_df))
 num_spline_basis <- dim(spline_basis)[1]
-gse6865_splined <- spline_profile_matrix(gse6865_raw, gse6865_raw_time, smooth_time, df = spline_df)
+expression_data <- gse6865_raw
 ```
+
+```{r}
+#Alternative, ignoring 1st 2 points
+measurement_times = floor((gse6865_raw_time[2:14] - gse6865_raw_time[2]) / 2) + 1
+smooth_time  <- seq(gse6865_raw_time[2],100, by = 2)
+spline_df <- 6
+spline_basis <- t(bs(smooth_time, degree = 3, df = spline_df))
+num_spline_basis <- dim(spline_basis)[1]
+expression_data <- gse6865_raw[,2:14]
+```
+
 
 #Multiple targets model
 ```{r}
@@ -69,7 +80,7 @@ targets <- c()
 
 data <- list(
   num_time = length(smooth_time),
-  num_measurements = length(gse6865_raw_time),
+  num_measurements = length(measurement_times),
   num_targets = length(targets),
   regulator_measured = 1,
   
@@ -80,16 +91,16 @@ data <- list(
   measurement_times = measurement_times,
   num_spline_basis = num_spline_basis,
   spline_basis = spline_basis,
-  expression = gse6865_raw[targets,],
-  regulator_expression = gse6865_raw[source,],
+  expression = expression_data[targets,],
+  regulator_expression = expression_data[source,],
   regulation_signs = array(1, length(targets)),
   measurement_sigma_absolute = 0.2,
   measurement_sigma_relative = 0.1,
-  intercept_prior_sigma = 2,
+  intercept_prior_sigma = array(2,dim = 1),
   initial_condition_prior_sigma = 0.05,
   sensitivity_over_degradation_prior_mean = 2.5,
   sensitivity_over_degradation_prior_sigma = 2,
-  sensitivity_prior_sigma = 1,
+  mean_synthesis_prior_sigma = 1,
   degradation_prior_mean = -3,
   degradation_prior_sigma = 1,
   w_prior_sigma = 2,
@@ -118,11 +129,12 @@ print(regulator_plot)
 ```{r}
 source <- "sigA"
 #source <- "sigB"
-targets <- c("codY","clpQ","yqxD","yhdL", "comA","codV","comEB", "dnaG", "ftsA","hemD" )
+#targets <- c("codY","clpQ","yqxD","yhdL", "comA","codV","comEB", "dnaG", "ftsA","hemD" )
+targets <- c("codY","clpQ","yqxD")
 
 data <- list(
   num_time = length(smooth_time),
-  num_measurements = length(gse6865_raw_time),
+  num_measurements = length(measurement_times),
   num_targets = length(targets),
   regulator_measured = 1,
   
@@ -133,16 +145,17 @@ data <- list(
   measurement_times = measurement_times,
   num_spline_basis = num_spline_basis,
   spline_basis = spline_basis,
-  expression = gse6865_raw[targets,],
-  regulator_expression = gse6865_raw[source,],
+  expression = expression_data[targets,],
+  regulator_expression = expression_data[source,],
   regulation_signs = array(1, length(targets)),
   measurement_sigma_absolute = 0.2,
   measurement_sigma_relative = 0.1,
-  intercept_prior_sigma = 2,
+  intercept_prior_sigma = array(2,dim = 1),
+  initial_condition_prior_sigma = 0.05,
   initial_condition_prior_sigma = 0.05,
   sensitivity_over_degradation_prior_mean = 2.5,
   sensitivity_over_degradation_prior_sigma = 2,
-  sensitivity_prior_sigma = 1,
+  mean_synthesis_prior_sigma = 1,
   degradation_prior_mean = -3,
   degradation_prior_sigma = 1,
   w_prior_sigma = 2,
@@ -150,13 +163,13 @@ data <- list(
   scale = 5
 )
 
-fit <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
-print(summary(fit, pars = c("coeffs", "intercept","initial_condition","sensitivity","degradation","w","b"))$summary)
+fit_source <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
+print(summary(fit_source, pars = c("coeffs", "intercept","initial_condition","sensitivity","degradation","w","b"))$summary)
 
 num_samples <- 100
 main_geom <- geom_line(alpha = 0.2)
 samples_to_show <-  sample(1:4000, num_samples)
-samples_regulator <- rstan::extract(fit,"predicted_regulator_expression")$predicted_regulator_expression[samples_to_show,]
+samples_regulator <- rstan::extract(fit_source,"predicted_regulator_expression")$predicted_regulator_expression[samples_to_show,]
 
 regulator_plot <- ggmatplot(1:data$num_time, t(samples_regulator), main_geom = main_geom) + ggtitle(paste0("Regulator - ", source))
 
@@ -165,8 +178,8 @@ if(data$regulator_measured != 0) {
 }
 print(regulator_plot)
  
-samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,,,drop=FALSE]
-samples_expression_replicates <- rstan::extract(fit,"expression_replicates")$expression_replicates[samples_to_show,,,drop=FALSE]
+samples_expression <- rstan::extract(fit_source,"predicted_expression")$predicted_expression[samples_to_show,,,drop=FALSE]
+samples_expression_replicates <- rstan::extract(fit_source,"expression_replicates")$expression_replicates[samples_to_show,,,drop=FALSE]
 for(target in 1:length(targets)) {
   print(ggmatplot(1:data$num_time, t(samples_expression[,target,]), main_geom = main_geom, x_title = "time", y_title = "expression") +
     geom_point(data = data.frame(x = data$measurement_times,  y = data$expression[target,]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Expression - ", targets[target])))
@@ -183,19 +196,11 @@ for(target in 1:length(targets)) {
 ##Checking whether resulting coeffs are approximately multivariate normal
 
 ```{r}
-pairs(fit, pars = "coeffs")
-samples_coeffs <- rstan::extract(fit,"coeffs")$coeffs
+pairs(fit_source, pars = "coeffs")
+samples_coeffs <- rstan::extract(fit_source,"coeffs")$coeffs
 uniPlot(samples_coeffs, type ="qqplot")
 uniPlot(samples_coeffs, type = "histogram")
 mardiaTest(samples_coeffs, qqplot = TRUE)
-hzTest(samples_coeffs)
-n_coeffs <- dim(samples_coeffs)[2]
-for(i in 1:(n_coeffs - 1)) {
-  for(j in (i+1):n_coeffs) {
-    test_res <- hzTest(samples_coeffs[,c(i,j)])
-    mvnPlot(test_res, type = "contour")
-  }
-}
 mvOutlier(samples_coeffs, qqplot = TRUE, method = "adj.quan")
 ```
 We see there are some deviations from normality. In particular it seems the posterior has heavier tails than normal. Let's see what happens when we try to fit multivariete normal anyway. 
@@ -205,16 +210,17 @@ coeffs_prior_cov <- cov(samples_coeffs)
 chol_cov <- chol(coeffs_prior_cov)
 coeffs_prior_mean <- colMeans(samples_coeffs)
 
-means_array <- t(array(rep(coeffs_prior_mean, dim(samples_coeffs)[1]),c(dim(samples_coeffs)[2],dim(samples_coeffs)[1])))
+means_array <- t(array(
+  rep(coeffs_prior_mean,dim(samples_coeffs)[1]),c(dim(samples_coeffs)[2],dim(samples_coeffs)[1])))
+
 samples_coeffs_mvn <- array(rnorm(dim(samples_coeffs)[1] * dim(samples_coeffs)[2], 0, 1), dim(samples_coeffs)) %*% chol_cov +  means_array
 
-uniPlot(samples_coeffs_mvn, type = "histogram")
-for(i in 1:(n_coeffs - 1)) {
-  for(j in (i+1):n_coeffs) {
-    test_res <- hzTest(samples_coeffs_mvn[,c(i,j)])
-    mvnPlot(test_res, type = "contour")
-  }
-}
+samples_to_show <- sample(1:nrow(samples_coeffs_mvn),num_samples)
+spline_samples <- t(samples_coeffs_mvn[samples_to_show,] %*% data$spline_basis ) * data$scale
+ggmatplot(1:data$num_time, spline_samples, main_geom = main_geom)
+
+#reprint regulator plot for compariosn
+regulator_plot
 
 ```
 
@@ -222,20 +228,28 @@ for(i in 1:(n_coeffs - 1)) {
 #Using the fitted normal to check regulations of other genes
 
 ```{r}
+set.seed(45287624)
+targets <- sample(rownames(expression_data[])[rowMeans(expression_data) > 1], 20)
+```
+
+
+```{r}
 source <- "sigA"
 #source <- "sigB"
 #targets <- c("yfkJ")
-targets <- c("yqxD","yfkJ","pyrB","purT")
+#targets <- c("yqxD","yfkJ","pyrB","purT")
+#targets <- c("yqxD")
 #targets <- c("jag","kinC","kinE","lepA")
 
 
-fits <- list()
+fits_known_reg <- list()
 for(t in 1:length(targets)) {
-  cat("\n==== Target: ", targets[t],"\n")
+  set.seed(321487 + t * 31456445)
+  cat("==== Target: ",t," - ", targets[t],"\n")
   
   data <- list(
     num_time = length(smooth_time),
-    num_measurements = length(gse6865_raw_time),
+    num_measurements = length(measurement_times),
     num_targets = 1,
     regulator_measured = 0,
     
@@ -247,14 +261,14 @@ for(t in 1:length(targets)) {
     num_spline_basis = num_spline_basis,
     spline_basis = spline_basis,
 
-    expression = gse6865_raw[targets[t],,drop=FALSE],
+    expression = expression_data[targets[t],,drop=FALSE],
     regulator_expression = numeric(0),
     regulation_signs = array(1, 1),
     measurement_sigma_absolute = 0.2,
     measurement_sigma_relative = 0.1,
-    intercept_prior_sigma = 2,
+    intercept_prior_sigma = numeric(0), #Intercept is ignored as regulator is not measured
     initial_condition_prior_sigma = 0.05,
-    sensitivity_prior_sigma = 1,
+    mean_synthesis_prior_sigma = 1,
     degradation_prior_mean = -3,
     degradation_prior_sigma = 1,
     w_prior_sigma = 2,
@@ -263,7 +277,11 @@ for(t in 1:length(targets)) {
   )
   
   fit <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
-  print(summary(fit, pars = c("coeffs", "intercept","initial_condition","sensitivity","degradation","w","b"))$summary)
+  #check_hmc_diagnostics(fit)
+  #print(summary(fit, pars = c("coeffs","initial_condition","sensitivity","degradation","w","b"))$summary)
+  np <- nuts_params(fit)
+  n_divergent <- np %>% filter(Parameter == "divergent__") %>% get("Value",.) %>% sum()
+  cat("Divergent: ", n_divergent,"\n")
   
   num_samples <- 100
   main_geom <- geom_line(alpha = 0.2)
@@ -282,7 +300,7 @@ for(t in 1:length(targets)) {
     print(ggmatplot(data$measurement_times, t(samples_expression_replicates[,1,]), main_geom = main_geom, x_title = "time", y_title = "expression") +
       geom_point(data = data.frame(x = data$measurement_times,  y = data$expression[1,]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Replicates - ", targets[t])))
  
-  fits[[t]] <- fit   
+  fits_known_reg[[t]] <- fit   
 }
 ```
 TODO: zkorelovat WAIC vs. sum sq.
@@ -292,7 +310,7 @@ TODO: zkorelovat WAIC vs. sum sq.
 looic <- array(-1,length(targets))
 waic <- array(-1,length(targets))
 for(t in 1:length(targets)) {
-  samples_log_lik <- rstan::extract(fits[[t]], "log_likelihood")$log_likelihood
+  samples_log_lik <- rstan::extract(fits_known_reg[[t]], "log_likelihood")$log_likelihood
   lik_data <- samples_log_lik[,1,]
   loo_res <- loo(lik_data)
   looic[t] <- loo_res$looic
@@ -380,9 +398,9 @@ data <- list(
   regulation_signs = array(1, length(targets)),
   measurement_sigma_absolute = 0.2,
   measurement_sigma_relative = 0.1,
-  intercept_prior_sigma = 0.01,
+  intercept_prior_sigma = numeric(0),
   initial_condition_prior_sigma = 0.05,
-  sensitivity_prior_sigma = 1,
+  mean_synthesis_prior_sigma = 1,
   degradation_prior_mean = -3,
   degradation_prior_sigma = 1,
   w_prior_sigma = 2,
@@ -413,130 +431,3 @@ for(target in 1:length(targets)) {
   
 
 ```
-
-#Older models
-
-##Unknown regulator
-
-```{r}
-unknown_reg_model <- stan_model(file = 'unknown_regulator_splines.stan')
-```
-
-```{r}
-fits <- list()
-```
-
-```{r}
-#Genes fit by sigA that don't really have a sigA-like regulator profile:
-# yfkJ, yhdL (requires smaller abs. error)
-#Those where it works: codY, clpQ, purT, yqxD
-#Some not regulated by sigA: pyrB, dnaA
-targets <- c("codY","clpQ","purT","yqxD", "yfkJ","yhdL", "dnaA", "pyrB")
-for(target in targets) {
-
-  data <- list(
-    num_time = length(smooth_time),
-    num_measurements = length(gse6865_raw_time),
-    measurement_times = gse6865_raw_time + 1,
-    num_knots = num_knots,
-    #knots = quantile(gse6865_raw_time + 1, probs = seq(1 / (num_knots + 1) ,1 - (1/ (num_knots + 1)), length.out = num_knots)),
-    knots = knots,
-    spline_degree = 3,
-    expression = gse6865_raw[target,],
-    measurement_sigma_absolute = 0.5,
-    measurement_sigma_relative = 0.2,
-    sensitivity_prior_sigma = 1,
-    degradation_prior_sigma = 0.3,
-    scale = 5
-  )
-  
-  fit <- sampling(unknown_reg_model, data = data, control = list(adapt_delta = 0.95))
-  cat("\n ======== ",target," =======\n")
-  print(summary(fit, pars = c("coeffs","initial_condition","sensitivity","degradation", "intercept"))$summary)
-  
-  num_samples <- 100
-  main_geom <- geom_line(alpha = 0.2)
-  samples_to_show <-  sample(1:4000, num_samples)
-  samples_regulator <- rstan::extract(fit,"regulator_profile")$regulator_profile[samples_to_show,]
-  print(ggmatplot(1:data$num_time, t(samples_regulator), main_geom = main_geom) + ggtitle(paste0("Regulator - ", target)))
-   
-  samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,]
-  print(ggmatplot(1:data$num_time, t(samples_expression), main_geom = main_geom) +
-    geom_point(data = data.frame(x = data$measurement_times,  y = data$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Expression - ", target)))
-  
-  fits[[target]] <- fit
-}
-```
-
-```{r}
-possible_source <- "sigA"
-
-for(target in targets) {
-  corr_dist <- array(-100, 4000)
-  samples_regulator <- rstan::extract(fits[[target]],"regulator_profile")$regulator_profile
-  source_profile_splined <- gse6865_splined[possible_source,]
-  for(s in 1:4000) {
-    corr_dist[s] <- cor(source_profile_splined, samples_regulator[s,])
-  }
-  
-  cat("\n ======== ",target," =======\n")
-  print(ggplot(data.frame(corr = abs(corr_dist)), aes(x=corr)) + geom_histogram(bins = 30) + ggtitle(paste0("Abs. corr - ", target)))
-  cat("P(|cor| > 0.9) = ", mean(abs(corr_dist) > 0.9), "\n")
-  cat("#(|cor| > 0.9) = ", sum(abs(corr_dist) > 0.9), "\n")
-  cat("E(|cor|) = ", mean(abs(corr_dist)), "\n")
-  cat("E((1-|cor|)^2) = ", mean((1 - abs(corr_dist))^2), "\n")
-#  mean(exp(-(1-abs(corr_dist))^2))
-#  ggplot(data.frame(corr_exp = exp(-(1-abs(corr_dist))^2)), aes(x=corr_exp)) + geom_histogram(bins = 30)
-}
-```
-```{r}
-normal_reg_model <- stan_model(file = 'normal_regulation_splines.stan')
-```
-
-
-```{r}
-source <- "sigA"
-targets <- c("codY","clpQ","purT","yqxD", "yfkJ","yhdL", "dnaA", "pyrB")
-for(target in targets) {
-
-  data <- list(
-    num_time = length(smooth_time),
-    num_measurements = length(gse6865_raw_time),
-    measurement_times = gse6865_raw_time + 1,
-    num_knots = num_knots,
-    #knots = quantile(gse6865_raw_time + 1, probs = seq(1 / (num_knots + 1) ,1 - (1/ (num_knots + 1)), length.out = num_knots)),
-    knots = knots,
-    spline_degree = 3,
-    expression = gse6865_raw[target,],
-    regulator_expression = gse6865_raw[source,],
-    measurement_sigma_absolute = 0.5,
-    measurement_sigma_relative = 0.2,
-    initial_condition_prior_sigma = 0.05,
-    sensitivity_prior_sigma = 1,
-    degradation_prior_sigma = 0.3,
-    w_prior_sigma = 2,
-    b_prior_sigma = 5,
-    scale = 5
-  )
-  
-  fit <- sampling(normal_reg_model, data = data, control = list(adapt_delta = 0.95))
-  cat("\n ======== ",target," =======\n")
-  print(summary(fit, pars = c("coeffs", "intercept","initial_condition","sensitivity","degradation","w","b"))$summary)
-  
-  num_samples <- 100
-  main_geom <- geom_line(alpha = 0.2)
-  samples_to_show <-  sample(1:4000, num_samples)
-  samples_regulator <- rstan::extract(fit,"predicted_regulator_expression")$predicted_regulator_expression[samples_to_show,]
-  print(ggmatplot(1:data$num_time, t(samples_regulator), main_geom = main_geom) +
-    geom_point(data = data.frame(x = data$measurement_times,  y = data$regulator_expression), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3)+ ggtitle(paste0("Regulator - ", target)))
-   
-  samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,]
-  print(ggmatplot(1:data$num_time, t(samples_expression), main_geom = main_geom) +
-    geom_point(data = data.frame(x = data$measurement_times,  y = data$expression), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Expression - ", target)))
-  
-  fits[[target]] <- fit
-}
-```
-
-
-
