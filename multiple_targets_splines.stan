@@ -30,10 +30,10 @@ data {
 
   real<lower = 0> initial_condition_prior_sigma;
   real<lower = 0> mean_synthesis_prior_sigma;
+  real<lower = 0> mean_regulatory_input_prior_sigma;
+  real<lower = 0> sd_regulatory_input_prior_sigma;
   real degradation_prior_mean;
   real<lower = 0> degradation_prior_sigma;
-  real<lower = 0> w_prior_sigma;
-  real<lower = 0> b_prior_sigma;
 
   //Intercept is only important when regulator is measured, otherwise, it is hidden in b
   real<lower = 0> intercept_prior_sigma[regulator_measured ? 1 : 0];
@@ -84,16 +84,20 @@ transformed data {
 parameters {
   row_vector[num_spline_basis] coeffs;
   vector<lower=0>[num_targets] initial_condition;
-  vector<lower=0>[num_targets] mean_synthesis;
+  vector<lower=0>[num_targets] mean_synthesis_raw;
+  //For multiple weights, I could add a simplex of relative weights
+  vector[num_targets] mean_regulatory_input_raw;
+  vector<lower=0>[num_targets] sd_regulatory_input_raw;
   vector<lower=0>[num_targets] degradation;
-  vector<lower=0>[num_targets] w_raw;
-  vector[num_targets] b_raw;
-  //real<lower=0> degradation_over_sensitivity;
+  //vector<lower=0>[num_targets] w_raw;
   real<lower = 0> intercept_raw[regulator_measured ? 1 : 0];
 }
 
 
 transformed parameters {
+  vector[num_targets] mean_regulatory_input;
+  vector<lower=0>[num_targets] sd_regulatory_input;
+  vector<lower=0>[num_targets] mean_synthesis;
   vector[num_time] regulator_profile;
   matrix<lower=0>[num_targets,num_time] predicted_expression;
   vector<lower=0>[num_time] predicted_regulator_expression;
@@ -102,7 +106,6 @@ transformed parameters {
   vector<lower=0>[num_targets] sensitivity;
   real intercept;
 
-  w = w_raw .* regulation_signs_real;
   if(coeffs_prior_given == 0) {
     regulator_profile = to_vector(coeffs * spline_basis_scaled) ;
   } else {
@@ -110,27 +113,36 @@ transformed parameters {
 
     regulator_profile = to_vector(coeffs_transformed * spline_basis_scaled);
   }
+
   {
     real min_intercept = -min(regulator_profile);
     if(regulator_measured == 0) {
       intercept = min_intercept;
     } else {
-      intercept = min_intercept + intercept_raw[1];
+      intercept = min_intercept + intercept_raw[1] * intercept_prior_sigma[1];
     }
     predicted_regulator_expression = regulator_profile + intercept;
   }
+
+  mean_synthesis = mean_synthesis_raw * mean_synthesis_prior_sigma;
+  mean_regulatory_input = mean_regulatory_input_raw * mean_regulatory_input_prior_sigma;
+  sd_regulatory_input = sd_regulatory_input_raw * sd_regulatory_input_prior_sigma;
+  {
+    real mean_regulator_profile = mean(regulator_profile);
+    real sd_regulator_profile = sd(regulator_profile);
+    w = regulation_signs_real .* (sd_regulatory_input ./ sd_regulator_profile);
+    b_centered = mean_regulatory_input - w * mean_regulator_profile;
+  }
+
   for(t in 1:num_targets)
   {
     real basal_over_degradation = basal_transcription[t] / degradation[t];
     real degradation_per_step = exp(-degradation[t]);
 
     real residual;
-    vector[num_time] regulatory_input;
     vector[num_time] synthesis;
 
-    regulatory_input = regulator_profile * w[t];
-    b_centered[t] = b_raw[t] - mean(regulatory_input);
-    synthesis = inv(1 + exp(-regulatory_input - b_centered[t]));
+    synthesis = inv(1 + exp(-regulator_profile * w[t] - b_centered[t]));
     sensitivity[t] = mean_synthesis[t] / mean(synthesis);
 
     predicted_expression[t,1] = initial_condition[t];
@@ -173,12 +185,12 @@ model {
     initial_condition ~ normal(0, initial_condition_prior_sigma);
     coeffs ~ normal(0,1); //coeffs are rescaled by the scale parameter
     //scale ~ normal(0,scale_prior_sigma);
-    intercept_raw ~ normal(0,intercept_prior_sigma);
-    mean_synthesis ~ normal(0, mean_synthesis_prior_sigma);
+    intercept_raw ~ normal(0, 1);
+    mean_synthesis_raw ~ normal(0, 1);
     //degradation_over_sensitivity ~ lognormal(0,1);
     degradation ~ lognormal(degradation_prior_mean, degradation_prior_sigma);
-    w_raw ~ normal(0,w_prior_sigma);
-    b_raw ~ normal(0,b_prior_sigma);
+    mean_regulatory_input_raw ~ normal(0, 1);
+    sd_regulatory_input_raw ~ normal(0, 1);
 }
 
 generated quantities {

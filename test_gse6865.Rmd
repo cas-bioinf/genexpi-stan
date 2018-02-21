@@ -227,6 +227,7 @@ regulator_plot
 #Using the fitted normal to check regulations of other genes
 
 ```{r}
+set.seed(132468714)
 targets <- sample(rownames(expression_data[])[rowMeans(expression_data) > 1])
 ```
 
@@ -244,7 +245,7 @@ print_plots <- TRUE
 print_divergent_only <- FALSE
 fits_known_reg <- list()
 #for(t in 1:length(targets)) {
-for(t in c(18,91,116,181,214,237,272,290,324,344,370,390,405,408,416,465,560,564,610,612,617,716,720,726,804)) {
+for(t in 306) {
 #for(t in c(116,205,237,324,370,390,448,465,538,610,613,623,684)) {
 #for(t in c(116,237,324,370,390,465)) {
   #set.seed(321487 + t * 31456445)
@@ -276,7 +277,8 @@ for(t in c(18,91,116,181,214,237,272,290,324,344,370,390,405,408,416,465,560,564
     mean_synthesis_prior_sigma = 3,
     degradation_prior_mean = -2,
     degradation_prior_sigma = 1,
-    w_prior_sigma = 5,
+    mean_regulatory_input_prior_sigma = 5,
+    sd_regulatory_input_prior_sigma = 5,
     b_prior_sigma = 5,
     scale = 5
   )

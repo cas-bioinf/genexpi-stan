@@ -117,40 +117,52 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
   mean_synthesis_prior_sigma <-  1
   degradation_prior_mean <- -3
   degradation_prior_sigma <- 1
-  b_prior_sigma <- 2
+  mean_regulatory_input_prior_sigma <- 5
+  sd_regulatory_input_prior_sigma <- 5
   initial_condition_prior_sigma <- 1
-  w_prior_sigma <- 2
 
-  #TODO: b_centered
-  b_raw <- array(-Inf, num_targets)
+  regulator_signs <- rbernoulli(num_targets) * 2 - 1 #Generates randomly -1 or 1
+
+  b_centered <- array(-Inf, num_targets)
   b <- array(-Inf, num_targets)
   w <- array(-Inf, num_targets)
+  sensitivity <- array(-Inf, num_targets)
   initial_condition <- array(-Inf, num_targets)
   degradation <- array(-Inf, num_targets)
-  sensitivity <- array(-Inf, num_targets)
+  mean_synthesis <- array(-Inf, num_targets)
+  mean_regulatory_input <- array(-Inf, num_targets)
+  sd_regulatory_input <- array(-Inf, num_targets)
 
 
   n_rejections <- 0
   for(t in 1:num_targets) {
     #Rejection sampling to have interesting profiles
     repeat {
-      sensitivity[t] <- abs(rnorm(1, 0, mean_synthesis_prior_sigma))
+      #The actual parameters
+      mean_regulatory_input[t] <- rnorm(1, 0, mean_regulatory_input_prior_sigma)
+      sd_regulatory_input[t] <- abs(rnorm(1, 0, sd_regulatory_input_prior_sigma))
+      mean_synthesis[t] <- abs(rnorm(1, 0, mean_synthesis_prior_sigma))
+
+      #The derived parameters
+      w[t] <- regulator_signs[t] * sd_regulatory_input[t] / sd(regulator_profile)
+      b_centered[t] <- mean_regulatory_input[t] - w[t] * mean(regulator_profile)
+      b[t] <- b_centered[t] + (intercept * w[t])
+
+      synthesis <- 1 / (1 + exp( -regulator_profile * w[t] - b_centered[t]))
+      sensitivity[t] <- mean_synthesis[t] / mean(synthesis)
 
       #degradation_over_sensitivity[t] <- rlnorm(1,0,1)
       #degradation[t] <- degradation_over_sensitivity[t] * sensitivity[t];
       #degradation[t] <- abs(rnorm(1, 0, degradation_prior_sigma))
       degradation[t] <- rlnorm(1, degradation_prior_mean, degradation_prior_sigma)
 
-      w[t] <- rnorm(1, 0, w_prior_sigma)
-      b_raw[t] <- rnorm(1, 0, b_prior_sigma)
-      b[t] <- b_raw[t] + intercept * w[t]
       initial_condition[t] <- abs(rnorm(1, 0,initial_condition_prior_sigma))
 
       if(integrate_ode45){
-        params <- c(degradation = degradation[t], bias = b_raw[t], sensitivity = sensitivity[t], weight = w[t], basal_transcription = 0, protein = approxfun(time, regulator_profile, rule=2));
+        params <- c(degradation = degradation[t], bias = b_centered[t], sensitivity = sensitivity[t], weight = w[t], basal_transcription = 0, protein = approxfun(time, regulator_profile, rule=2));
         expression_true[t,] <-  ode( y = c(x = initial_condition[t]), times = time, func = target_ODE, parms = params, method = "ode45")[,"x"];
       } else {
-        expression_true[t,] <- numerical_integration(0, degradation[t], initial_condition[t], sensitivity[t], weight = w[t], bias = b_raw[t], regulator_profile, num_time)
+        expression_true[t,] <- numerical_integration(0, degradation[t], initial_condition[t], sensitivity[t], weight = w[t], bias = b_centered[t], regulator_profile, num_time)
       }
 
       if(all(expression_true[t,] > 0)
@@ -199,17 +211,17 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
       spline_basis = t(spline_basis),
 
       expression = expression_observed,
-      regulation_signs = sign(w),
+      regulation_signs = regulator_signs,
       regulator_expression = if (regulator_measured) { regulator_expression_observed } else { numeric(0) },
       measurement_sigma_absolute = measurement_sigma_absolute,
       measurement_sigma_relative = measurement_sigma_relative,
-      intercept_prior_sigma = intercept_prior_sigma,
+      intercept_prior_sigma = if (regulator_measured) { array(intercept_prior_sigma, 1) } else {numeric(0)},
       initial_condition_prior_sigma = initial_condition_prior_sigma,
       mean_synthesis_prior_sigma = mean_synthesis_prior_sigma,
       degradation_prior_mean = degradation_prior_mean,
       degradation_prior_sigma = degradation_prior_sigma,
-      w_prior_sigma = w_prior_sigma,
-      b_prior_sigma = b_prior_sigma,
+      mean_regulatory_input_prior_sigma = mean_regulatory_input_prior_sigma,
+      sd_regulatory_input_prior_sigma = sd_regulatory_input_prior_sigma,
       scale = scale
     )
   ))
