@@ -12,6 +12,7 @@ options(mc.cores = 3)
 library(tidyverse)
 library(loo)
 library(MVN)
+library(bayesplot)
 ```
 
 
@@ -129,8 +130,8 @@ print(regulator_plot)
 ```{r}
 source <- "sigA"
 #source <- "sigB"
-#targets <- c("codY","clpQ","yqxD","yhdL", "comA","codV","comEB", "dnaG", "ftsA","hemD" )
-targets <- c("codY","clpQ","yqxD")
+targets <- c("codY","clpQ","yqxD","yhdL", "comA","codV","comEB", "dnaG", "ftsA","hemD" )
+#targets <- c("codY","clpQ","yqxD")
 
 data <- list(
   num_time = length(smooth_time),
@@ -151,13 +152,11 @@ data <- list(
   measurement_sigma_absolute = 0.2,
   measurement_sigma_relative = 0.1,
   intercept_prior_sigma = array(2,dim = 1),
-  initial_condition_prior_sigma = 0.05,
-  initial_condition_prior_sigma = 0.05,
-  sensitivity_over_degradation_prior_mean = 2.5,
-  sensitivity_over_degradation_prior_sigma = 2,
-  mean_synthesis_prior_sigma = 1,
-  degradation_prior_mean = -3,
+  initial_condition_prior_sigma = 2,
+  mean_synthesis_prior_sigma = 3,
+  degradation_prior_mean = -2,
   degradation_prior_sigma = 1,
+  w_prior_sigma = 5,
   w_prior_sigma = 2,
   b_prior_sigma = 5,
   scale = 5
@@ -228,8 +227,7 @@ regulator_plot
 #Using the fitted normal to check regulations of other genes
 
 ```{r}
-set.seed(45287624)
-targets <- sample(rownames(expression_data[])[rowMeans(expression_data) > 1], 20)
+targets <- sample(rownames(expression_data[])[rowMeans(expression_data) > 1])
 ```
 
 
@@ -242,9 +240,16 @@ source <- "sigA"
 #targets <- c("jag","kinC","kinE","lepA")
 
 
+print_plots <- TRUE
+print_divergent_only <- FALSE
 fits_known_reg <- list()
-for(t in 1:length(targets)) {
-  set.seed(321487 + t * 31456445)
+#for(t in 1:length(targets)) {
+for(t in c(18,91,116,181,214,237,272,290,324,344,370,390,405,408,416,465,560,564,610,612,617,716,720,726,804)) {
+#for(t in c(116,205,237,324,370,390,448,465,538,610,613,623,684)) {
+#for(t in c(116,237,324,370,390,465)) {
+  #set.seed(321487 + t * 31456445)
+  set.seed(9245 + t * 4728)
+  #set.seed(321487 + t * 2112144) #This seed produces divergences for c(390,678,416,610,780)
   cat("==== Target: ",t," - ", targets[t],"\n")
   
   data <- list(
@@ -267,43 +272,73 @@ for(t in 1:length(targets)) {
     measurement_sigma_absolute = 0.2,
     measurement_sigma_relative = 0.1,
     intercept_prior_sigma = numeric(0), #Intercept is ignored as regulator is not measured
-    initial_condition_prior_sigma = 0.05,
-    mean_synthesis_prior_sigma = 1,
-    degradation_prior_mean = -3,
+    initial_condition_prior_sigma = 2,
+    mean_synthesis_prior_sigma = 3,
+    degradation_prior_mean = -2,
     degradation_prior_sigma = 1,
-    w_prior_sigma = 2,
+    w_prior_sigma = 5,
     b_prior_sigma = 5,
     scale = 5
   )
   
-  fit <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
-  #check_hmc_diagnostics(fit)
+  init <- function() {
+    list(initial_condition = array(expression_data[targets[t],1] + 1e-3, 1))
+  }
+  
+  fit <- sampling(multiple_targets_model, data = data, init = init, control = list(adapt_delta = 0.95))
   #print(summary(fit, pars = c("coeffs","initial_condition","sensitivity","degradation","w","b"))$summary)
-  np <- nuts_params(fit)
-  n_divergent <- np %>% filter(Parameter == "divergent__") %>% get("Value",.) %>% sum()
-  cat("Divergent: ", n_divergent,"\n")
+  n_divergent <- get_num_divergent(fit)
+  n_treedepth <- get_num_max_treedepth(fit)
+  n_bfmi <- length(get_low_bfmi_chains(fit))
+  max_rhat <- max(summary(fit)$summary[,"Rhat"], na.rm = TRUE)
+  min_neff <- min(summary(fit)$summary[,"n_eff"], na.rm = TRUE)
+  if(n_divergent > 0 || n_treedepth > 0 || n_bfmi > 0 || max_rhat > 1.1 || min_neff < 50) {
+      fits_known_reg[[t]] <- fit   
+      cat("Divergent: ", n_divergent," treedept: ", n_treedepth," BFMI: ", n_bfmi, " max(Rhat):", max_rhat, " min(n_eff):",min_neff, "\n")
+      is_divergent <- TRUE
   
-  num_samples <- 100
-  main_geom <- geom_line(alpha = 0.2)
-  samples_to_show <-  sample(1:4000, num_samples)
-  samples_regulator <- rstan::extract(fit,"predicted_regulator_expression")$predicted_regulator_expression[samples_to_show,]
+  } else {
+     fits_known_reg[[t]] <- NULL
+     is_divergent <- FALSE
+  }
   
-  # regulator_plot <- ggmatplot(1:data$num_time, t(samples_regulator), main_geom = main_geom) + ggtitle(paste0("Regulator - ", targets[t])) + geom_point(data = data.frame(x = data$measurement_times,  y = gse6865_raw[source,]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3)
-  # print(regulator_plot)
+  if(print_plots && (is_divergent || !print_divergent_only)) {
+        num_samples <- 100
+        main_geom <- geom_line(alpha = 0.2)
+        samples_to_show <-  sample(1:4000, num_samples)
+        samples_regulator <- rstan::extract(fit,"predicted_regulator_expression")$predicted_regulator_expression[samples_to_show,]
+        
+        regulator_plot <- ggmatplot(1:data$num_time, t(samples_regulator), main_geom = main_geom) + ggtitle(paste0("Regulator - ", targets[t])) + geom_point(data = data.frame(x = data$measurement_times,  y = gse6865_raw[source,]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3)
+        print(regulator_plot)
+        
+        samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,,,drop=FALSE]
+        samples_expression_replicates <- rstan::extract(fit,"expression_replicates")$expression_replicates[samples_to_show,,,drop=FALSE]
+      
+          print(ggmatplot(1:data$num_time, t(samples_expression[,1,]), main_geom = main_geom, x_title = "time", y_title = "expression") +
+            geom_point(data = data.frame(x = data$measurement_times,  y = data$expression[1,]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Expression - ", targets[t])))
+          
+        #  print(ggmatplot(data$measurement_times, t(samples_expression_replicates[,1,]), main_geom = main_geom, x_title = "time", y_title = "expression") +
+         #   geom_point(data = data.frame(x = data$measurement_times,  y = data$expression[1,]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Replicates - ", targets[t])))
+    }   
   
-  samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,,,drop=FALSE]
-  samples_expression_replicates <- rstan::extract(fit,"expression_replicates")$expression_replicates[samples_to_show,,,drop=FALSE]
-
-    print(ggmatplot(1:data$num_time, t(samples_expression[,1,]), main_geom = main_geom, x_title = "time", y_title = "expression") +
-      geom_point(data = data.frame(x = data$measurement_times,  y = data$expression[1,]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Expression - ", targets[t])))
-    
-    print(ggmatplot(data$measurement_times, t(samples_expression_replicates[,1,]), main_geom = main_geom, x_title = "time", y_title = "expression") +
-      geom_point(data = data.frame(x = data$measurement_times,  y = data$expression[1,]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Replicates - ", targets[t])))
- 
-  fits_known_reg[[t]] <- fit   
 }
+
+
 ```
 TODO: zkorelovat WAIC vs. sum sq.
+
+```{r}
+count_chains_overhead <- function(fit) {
+  times <- get_elapsed_time(fit) 
+  total_times <- times[,"warmup"] + times[,"sample"]
+  possible_saving <-  max(total_times) * length(total_times) - sum(total_times)
+  return( possible_saving / max(total_times) )
+}
+
+hist(sapply(fits_known_reg, count_chains_overhead))
+
+```
+
 
 ```{r}
 
