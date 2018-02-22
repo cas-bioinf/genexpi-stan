@@ -29,7 +29,9 @@ data {
   real<lower=0> measurement_sigma_absolute;
 
   real<lower = 0> initial_condition_prior_sigma;
-  real<lower = 0> mean_synthesis_prior_sigma;
+  //real<lower = 0> mean_normalized_synthesis_prior_sigma;
+  real<lower = 0> mean_normalized_synthesis_prior_shape;
+  real<lower = 0> mean_normalized_synthesis_prior_rate;
   real<lower = 0> mean_regulatory_input_prior_sigma;
   real<lower = 0> sd_regulatory_input_prior_sigma;
   real degradation_prior_mean;
@@ -45,6 +47,7 @@ transformed data {
   matrix[num_spline_basis, num_time] spline_basis_scaled;  // matrix of B-splines
   real time_real[num_time];
   vector[num_targets] regulation_signs_real;
+  vector[num_targets] max_target_expression;
   vector<lower=0>[num_targets] basal_transcription;
 
   cholesky_factor_cov[coeffs_prior_size(coeffs_prior_given, num_spline_basis)] coeffs_prior_chol_cov = cholesky_decompose(coeffs_prior_cov);
@@ -62,6 +65,10 @@ transformed data {
       reject("regulation_signs have to be nonzero");
     }
     regulation_signs_real[t] = regulation_signs[t];
+  }
+
+  for(t in 1:num_targets) {
+    max_target_expression[t] = max(expression[t]);
   }
 
   {
@@ -124,7 +131,7 @@ transformed parameters {
     predicted_regulator_expression = regulator_profile + intercept;
   }
 
-  mean_synthesis = mean_synthesis_raw * mean_synthesis_prior_sigma;
+  mean_synthesis = mean_synthesis_raw .* max_target_expression;
   mean_regulatory_input = mean_regulatory_input_raw * mean_regulatory_input_prior_sigma;
   sd_regulatory_input = sd_regulatory_input_raw * sd_regulatory_input_prior_sigma;
   {
@@ -186,7 +193,8 @@ model {
     coeffs ~ normal(0,1); //coeffs are rescaled by the scale parameter
     //scale ~ normal(0,scale_prior_sigma);
     intercept_raw ~ normal(0, 1);
-    mean_synthesis_raw ~ normal(0, 1);
+    //mean_synthesis_raw ~ normal(0, 1);
+    mean_synthesis_raw ~ gamma(mean_normalized_synthesis_prior_shape, mean_normalized_synthesis_prior_rate);
     //degradation_over_sensitivity ~ lognormal(0,1);
     degradation ~ lognormal(degradation_prior_mean, degradation_prior_sigma);
     mean_regulatory_input_raw ~ normal(0, 1);
