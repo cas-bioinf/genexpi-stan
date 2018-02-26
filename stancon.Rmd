@@ -1,0 +1,37 @@
+---
+title: "ODE model of gene regulation"
+output: html_notebook
+---
+
+Introduction. Titsias & Honkela
+
+Problems with ODE solver over interpolated data
+
+The integration trick
+
+The model is not well identified:
+
+- approximately linear regulation (tails of sigmoid)
+- constant synthesis solution & regulated solution (different starting points)
+- positive weight solution vs. negative weight
+- hitting one of two peaks
+
+Some identification problems may be resolved by reparametrization
+
+Some by filtering constant synthesis first
+
+
+How to handle the regulator(s)?
+
+- Splines
+- GP - had problems fitting
+
+forcing positivity with log1pexp makes for weird random profiles, rather move closest point to zero. min is a continuous (and mostly smooth) function of the spline coeffs
+
+First refine regulator by working with known targets.
+
+Reducing actual posterior to multivariate normal and using to fit other genes.
+
+WAIC to quickly assess fit quality
+
+
