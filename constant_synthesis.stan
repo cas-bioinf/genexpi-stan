@@ -7,22 +7,25 @@ data {
   real<lower=0> measurement_sigma_absolute;
 
   real<lower = 0> initial_condition_prior_sigma;
-  real<lower = 0> synthesis_over_degradation_prior_sigma;
-  real synthesis_over_degradation_prior_mean;
+  real<lower = 0> asymptotic_normalized_state_prior_sigma;
   real degradation_prior_mean;
   real<lower = 0> degradation_prior_sigma;
 }
 
+transformed data {
+  real<lower=0> max_expression = max(expression);
+}
 
 parameters {
   real<lower=0> initial_condition;
-  real<lower=0> synthesis_over_degradation;
+  real<lower=0> asymptotic_normalized_state;
   real<lower=0> degradation;
 }
 
 
 transformed parameters {
   vector<lower=0>[num_measurements] predicted_expression;
+  real<lower=0> synthesis_over_degradation = asymptotic_normalized_state * max_expression;
 
   {
     for(t in 1:num_measurements) {
@@ -41,7 +44,7 @@ model {
     }
 
     initial_condition ~ normal(0, initial_condition_prior_sigma);
-    synthesis_over_degradation ~ normal(synthesis_over_degradation_prior_mean, synthesis_over_degradation_prior_sigma) T[0,];
+    asymptotic_normalized_state ~ normal(0, asymptotic_normalized_state_prior_sigma);
     degradation ~ lognormal(degradation_prior_mean, degradation_prior_sigma);
 }
 

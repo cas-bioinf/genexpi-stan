@@ -29,9 +29,7 @@ data {
   real<lower=0> measurement_sigma_absolute;
 
   real<lower = 0> initial_condition_prior_sigma;
-  //real<lower = 0> mean_normalized_synthesis_prior_sigma;
-  real<lower = 0> mean_normalized_synthesis_prior_shape;
-  real<lower = 0> mean_normalized_synthesis_prior_rate;
+  real<lower = 0> asymptotic_normalized_state_prior_sigma;
   real<lower = 0> mean_regulatory_input_prior_sigma;
   real<lower = 0> sd_regulatory_input_prior_sigma;
   real degradation_prior_mean;
@@ -91,12 +89,11 @@ transformed data {
 parameters {
   row_vector[num_spline_basis] coeffs;
   vector<lower=0>[num_targets] initial_condition;
-  vector<lower=0>[num_targets] mean_synthesis_raw;
+  vector<lower=0>[num_targets] asymptotic_normalized_state;
   //For multiple weights, I could add a simplex of relative weights
   vector[num_targets] mean_regulatory_input_raw;
   vector<lower=0>[num_targets] sd_regulatory_input_raw;
   vector<lower=0>[num_targets] degradation;
-  //vector<lower=0>[num_targets] w_raw;
   real<lower = 0> intercept_raw[regulator_measured ? 1 : 0];
 }
 
@@ -131,7 +128,7 @@ transformed parameters {
     predicted_regulator_expression = regulator_profile + intercept;
   }
 
-  mean_synthesis = mean_synthesis_raw .* max_target_expression;
+  mean_synthesis = asymptotic_normalized_state  .* degradation .* max_target_expression;
   mean_regulatory_input = mean_regulatory_input_raw * mean_regulatory_input_prior_sigma;
   sd_regulatory_input = sd_regulatory_input_raw * sd_regulatory_input_prior_sigma;
   {
@@ -186,16 +183,13 @@ model {
         real sigma_regulator = measurement_sigma_absolute + measurement_sigma_relative * predicted_regulator_expression[measurement_times[m]];
         regulator_expression[m] ~ normal(predicted_regulator_expression[measurement_times[m]], sigma_regulator)  T[0,];
       }
-      //log(expression[m]) ~ normal(log(predicted_expression[measurement_times[m]]), measurement_sigma);
     }
 
     initial_condition ~ normal(0, initial_condition_prior_sigma);
     coeffs ~ normal(0,1); //coeffs are rescaled by the scale parameter
-    //scale ~ normal(0,scale_prior_sigma);
     intercept_raw ~ normal(0, 1);
-    //mean_synthesis_raw ~ normal(0, 1);
-    mean_synthesis_raw ~ gamma(mean_normalized_synthesis_prior_shape, mean_normalized_synthesis_prior_rate);
-    //degradation_over_sensitivity ~ lognormal(0,1);
+    asymptotic_normalized_state ~ normal(1, asymptotic_normalized_state_prior_sigma);
+
     degradation ~ lognormal(degradation_prior_mean, degradation_prior_sigma);
     mean_regulatory_input_raw ~ normal(0, 1);
     sd_regulatory_input_raw ~ normal(0, 1);
@@ -218,13 +212,6 @@ generated quantities {
       expression_replicates[t,m] = inv_Phi(u) * sigma[t] + predicted_expression[t,measurement_times[m]];
 
       log_likelihood[t,m] = normal_lpdf(expression[t,m]| predicted_expression[t,measurement_times[m]], sigma[t]) - log_diff_exp(1, normal_lcdf(lower_bound | predicted_expression[t,measurement_times[m]], sigma[t]));
-      /*
-      while (1) {
-        expression_replicates[t,m] = normal_rng(predicted_expression[t,measurement_times[m]], sigma[t]);
-        if(expression_replicates[t,m] >= 0) {
-          break;
-        }
-      }*/
     }
   }
 }

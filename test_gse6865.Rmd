@@ -283,9 +283,9 @@ for(t in 50:length(targets)) {
     measurement_sigma_relative = 0.1,
     intercept_prior_sigma = numeric(0), #Intercept is ignored as regulator is not measured
     initial_condition_prior_sigma = 2,
-#    mean_normalized_synthesis_prior_sigma = 0.5,
-    mean_normalized_synthesis_prior_shape = 1.1,
-    mean_normalized_synthesis_prior_rate = 3,
+    asymptotic_normalized_state_prior_sigma = 0.5,
+#    mean_normalized_synthesis_prior_shape = 1.5,
+#    mean_normalized_synthesis_prior_rate = 3,
     degradation_prior_mean = -2,
     degradation_prior_sigma = 1,
     mean_regulatory_input_prior_sigma = 5,
@@ -418,6 +418,9 @@ hist(sapply(fits_known_reg, count_chains_overhead))
 looic <- array(-1,length(targets))
 waic <- array(-1,length(targets))
 for(t in 1:length(targets)) {
+  if(t > length(fits_known_reg) || is.null(fits_known_reg[[t]])) {
+    next
+  }
   samples_log_lik <- rstan::extract(fits_known_reg[[t]], "log_likelihood")$log_likelihood
   lik_data <- samples_log_lik[,1,]
   loo_res <- loo(lik_data)
@@ -425,7 +428,7 @@ for(t in 1:length(targets)) {
   waic[t] <- waic(lik_data)$waic
 }
 o <- order(looic)
-data.frame(order = (1:length(targets))[o],gene = targets[o], waic = waic[o], looic = looic[o])
+data.frame(order = (1:length(targets))[o],gene = targets[o], waic = waic[o], looic = looic[o]) %>% filter(looic >= 0)
 
 ```
 
@@ -437,6 +440,9 @@ csynth_model <- stan_model(file = 'constant_synthesis.stan')
 ```{r}
 fits_csynth <- list()
 for(t in 1:length(targets)) {
+  if(t > length(fits_known_reg) || is.null(fits_known_reg[[t]])) {
+    next
+  }
   
   data <- list(
     num_measurements = length(gse6865_raw_time),
@@ -445,8 +451,7 @@ for(t in 1:length(targets)) {
     measurement_sigma_absolute = 0.2,
     measurement_sigma_relative = 0.1,
     initial_condition_prior_sigma = 0.05,
-    synthesis_over_degradation_prior_mean = 0,
-    synthesis_over_degradation_prior_sigma = 15,
+    asymptotic_normalized_state_prior_sigma = 0.5,
     degradation_prior_mean = -3,
     degradation_prior_sigma = 1
   )  
@@ -474,6 +479,10 @@ for(t in 1:length(targets)) {
 looic <- array(-1,length(targets))
 waic <- array(-1,length(targets))
 for(t in 1:length(targets)) {
+  if(t > length(fits_csynth) || is.null(fits_csynth[[t]])) {
+    next
+  }
+
   samples_log_lik <- rstan::extract(fits_csynth[[t]], "log_likelihood")$log_likelihood
   lik_data <- samples_log_lik
   loo_res <- loo(lik_data)
@@ -481,7 +490,7 @@ for(t in 1:length(targets)) {
   waic[t] <- waic(lik_data)$waic
 }
 o <- order(looic)
-data.frame(order = (1:length(targets))[o],gene = targets[o], waic = waic[o], looic = looic[o])
+data.frame(order = (1:length(targets))[o],gene = targets[o], waic = waic[o], looic = looic[o]) %>% filter(waic >= 0)
 
 ```
 
@@ -507,7 +516,7 @@ data <- list(
   measurement_sigma_absolute = 0.2,
   measurement_sigma_relative = 0.1,
   intercept_prior_sigma = numeric(0),
-  initial_condition_prior_sigma = 0.05,
+  initial_condition_prior_sigma = 2,
   mean_synthesis_prior_sigma = 1,
   degradation_prior_mean = -3,
   degradation_prior_sigma = 1,
