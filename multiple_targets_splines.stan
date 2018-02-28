@@ -1,32 +1,24 @@
-functions {
-  int coeffs_prior_size(int coeffs_prior_given, int num_spline_basis) {
-    return coeffs_prior_given ? num_spline_basis : 1;
-  }
-
-
-}
 
 data {
   int num_time;
   int num_measurements;
+  int num_regulators;
   int num_targets;
-  int<lower=1,upper=num_time> measurement_times[num_measurements];
-  int<lower=0,upper=1> regulator_measured;
+  int<lower=0,upper=1> regulators_measured;
 
-  vector<lower=0>[regulator_measured ? num_measurements : 0] regulator_expression;
-  vector<lower=0>[num_measurements] expression[num_targets];
-  int<lower=-1,upper=1> regulation_signs[num_targets];
+  int<lower=1,upper=num_time> measurement_times[num_measurements];
+
+  matrix<lower=0>[regulators_measured ? num_measurements : 0, num_regulators] regulator_expression;
+  matrix<lower=0>[num_measurements, num_targets] expression;
+  int<lower=-1,upper=1> regulation_signs[num_regulators, num_targets];
 
   int num_spline_basis;
-  matrix[num_spline_basis, num_time] spline_basis;  // matrix of B-splines
+  matrix[num_time, num_spline_basis] spline_basis;  // matrix of B-splines
 
 
   int<lower=0,upper=1> coeffs_prior_given;
-  vector[coeffs_prior_size(coeffs_prior_given, num_spline_basis)] coeffs_prior_mean;
-  cov_matrix[coeffs_prior_size(coeffs_prior_given, num_spline_basis)] coeffs_prior_cov;
-
-  real<lower=0> measurement_sigma_relative;
-  real<lower=0> measurement_sigma_absolute;
+  vector[num_spline_basis] coeffs_prior_mean[coeffs_prior_given ? num_regulators : 0];
+  cov_matrix[num_spline_basis] coeffs_prior_cov[coeffs_prior_given ? num_regulators : 0];
 
   real<lower = 0> initial_condition_prior_sigma;
   real<lower = 0> asymptotic_normalized_state_prior_sigma;
@@ -36,33 +28,51 @@ data {
   real<lower = 0> degradation_prior_sigma;
 
   //Intercept is only important when regulator is measured, otherwise, it is hidden in b
-  real<lower = 0> intercept_prior_sigma[regulator_measured ? 1 : 0];
+  real<lower = 0> intercept_prior_sigma[regulators_measured ? num_regulators : 0];
+
+
+  int<lower=0,upper=1> sigma_given;
+  real<lower = 0> sigma_relative_prior_mean[sigma_given ? 0 : 1];
+  real<lower = 0> sigma_absolute_prior_mean[sigma_given ? 0 : 1];
+  real<lower = 0> sigma_relative_prior_sigma[sigma_given ? 0 : 1];
+  real<lower = 0> sigma_absolute_prior_sigma[sigma_given ? 0 : 1];
+
+  real<lower = 0> sigma_relative_data[sigma_given ? 1 : 0];
+  real<lower = 0> sigma_absolute_data[sigma_given ? 1 : 0];
+
 
   real<lower=0> scale;
 }
 
 transformed data {
-  matrix[num_spline_basis, num_time] spline_basis_scaled;  // matrix of B-splines
+  matrix[num_time, num_spline_basis] spline_basis_scaled;  // matrix of B-splines
   real time_real[num_time];
-  vector[num_targets] regulation_signs_real;
+  vector[num_targets] regulation_signs_real[num_regulators];
   vector[num_targets] max_target_expression;
   vector<lower=0>[num_targets] basal_transcription;
 
-  cholesky_factor_cov[coeffs_prior_size(coeffs_prior_given, num_spline_basis)] coeffs_prior_chol_cov = cholesky_decompose(coeffs_prior_cov);
+  cholesky_factor_cov[num_spline_basis] coeffs_prior_chol_cov[coeffs_prior_given ? num_regulators : 0];
 
-  if(regulator_measured != 0 && coeffs_prior_given != 0) {
+
+
+  if(regulators_measured != 0 && coeffs_prior_given != 0) {
     reject("You are not supposed to give coeffs prior if regulator is measured. Use scale parameter instead.");
+  }
+
+  if (coeffs_prior_given) {
+    for(r in 1:num_regulators) {
+      coeffs_prior_chol_cov[r] = cholesky_decompose(coeffs_prior_cov[r]);
+    }
   }
 
   for(i in 1:num_time) {
     time_real[i] = i;
   }
 
-  for(t in 1:num_targets) {
-    if(regulation_signs[t] == 0) {
-      reject("regulation_signs have to be nonzero");
+  for(r in 1:num_regulators) {
+    for(t in 1:num_targets) {
+      regulation_signs_real[r, t] = regulation_signs[r, t];
     }
-    regulation_signs_real[t] = regulation_signs[t];
   }
 
   for(t in 1:num_targets) {
@@ -87,14 +97,17 @@ transformed data {
 
 
 parameters {
-  row_vector[num_spline_basis] coeffs;
+  matrix[num_spline_basis, num_regulators] coeffs;
   vector<lower=0>[num_targets] initial_condition;
   vector<lower=0>[num_targets] asymptotic_normalized_state;
-  //For multiple weights, I could add a simplex of relative weights
+  simplex[num_regulators] relative_weights[num_targets];
   vector[num_targets] mean_regulatory_input_raw;
   vector<lower=0>[num_targets] sd_regulatory_input_raw;
   vector<lower=0>[num_targets] degradation;
-  real<lower = 0> intercept_raw[regulator_measured ? 1 : 0];
+  real<lower = 0> intercept_raw[regulators_measured ? num_regulators : 0];
+
+  real<lower=0> sigma_relative_param[sigma_given ? 0 : 1];
+  real<lower=0> sigma_absolute_param[sigma_given ? 0 : 1];
 }
 
 
@@ -102,39 +115,50 @@ transformed parameters {
   vector[num_targets] mean_regulatory_input;
   vector<lower=0>[num_targets] sd_regulatory_input;
   vector<lower=0>[num_targets] mean_synthesis;
-  vector[num_time] regulator_profile;
-  matrix<lower=0>[num_targets,num_time] predicted_expression;
-  vector<lower=0>[num_time] predicted_regulator_expression;
-  vector[num_targets] w;
+  matrix[num_time, num_regulators] regulator_profile;
+  matrix<lower=0>[num_time, num_targets] predicted_expression;
+  matrix<lower=0>[num_time, num_regulators] predicted_regulator_expression;
+  matrix[num_targets, num_regulators] w;
   vector[num_targets] b_centered;
   vector<lower=0>[num_targets] sensitivity;
-  real intercept;
+  vector[num_regulators] intercept;
 
-  if(coeffs_prior_given == 0) {
-    regulator_profile = to_vector(coeffs * spline_basis_scaled) ;
-  } else {
-    row_vector[num_spline_basis] coeffs_transformed = to_row_vector(coeffs_prior_chol_cov * to_vector(coeffs) + coeffs_prior_mean);
+  real sigma_relative = sigma_given ? sigma_relative_data[1] : sigma_relative_param[1];
+  real sigma_absolute = sigma_given ? sigma_absolute_data[1] : sigma_absolute_param[1];
 
-    regulator_profile = to_vector(coeffs_transformed * spline_basis_scaled);
-  }
 
-  {
-    real min_intercept = -min(regulator_profile);
-    if(regulator_measured == 0) {
-      intercept = min_intercept;
+  for(r in 1:num_regulators) {
+    if(coeffs_prior_given == 0) {
+      regulator_profile[,r] = spline_basis_scaled * coeffs[,r]; //Note the transpose
     } else {
-      intercept = min_intercept + intercept_raw[1] * intercept_prior_sigma[1];
+      vector[num_spline_basis] coeffs_transformed = coeffs_prior_chol_cov[r] * coeffs[,r]  + coeffs_prior_mean[r];
+
+      regulator_profile[,r] = spline_basis_scaled * coeffs_transformed;
     }
-    predicted_regulator_expression = regulator_profile + intercept;
+
+    {
+      real min_intercept = -min(regulator_profile[,r]);
+      if(regulators_measured == 0) {
+        intercept[r] = min_intercept;
+      } else {
+        intercept[r] = min_intercept + intercept_raw[r] * intercept_prior_sigma[r];
+      }
+      predicted_regulator_expression[,r] = regulator_profile[,r] + intercept[r];
+    }
   }
+
 
   mean_synthesis = asymptotic_normalized_state  .* degradation .* max_target_expression;
   mean_regulatory_input = mean_regulatory_input_raw * mean_regulatory_input_prior_sigma;
   sd_regulatory_input = sd_regulatory_input_raw * sd_regulatory_input_prior_sigma;
   {
-    real mean_regulator_profile = mean(regulator_profile);
-    real sd_regulator_profile = sd(regulator_profile);
-    w = regulation_signs_real .* (sd_regulatory_input ./ sd_regulator_profile);
+    vector[num_regulators] mean_regulator_profile;
+    for(r in 1:num_regulators)
+    {
+      real sd_regulator_profile = sd(regulator_profile[,r]);
+      mean_regulator_profile[r] = mean(regulator_profile[,r]);
+      w[,r] = regulation_signs_real[r,] .* (sd_regulatory_input ./ sd_regulator_profile) .* to_vector(relative_weights[,r]);
+    }
     b_centered = mean_regulatory_input - w * mean_regulator_profile;
   }
 
@@ -146,10 +170,10 @@ transformed parameters {
     real residual;
     vector[num_time] synthesis;
 
-    synthesis = inv(1 + exp(-regulator_profile * w[t] - b_centered[t]));
+    synthesis = inv(1 + exp( (-regulator_profile * (w[t,]')) - b_centered[t]));
     sensitivity[t] = mean_synthesis[t] / mean(synthesis);
 
-    predicted_expression[t,1] = initial_condition[t];
+    predicted_expression[1,t] = initial_condition[t];
 
     //Calculating the integral by trapezoid rule in a single pass for all values
     residual = -0.5 * synthesis[1];
@@ -161,7 +185,7 @@ transformed parameters {
 
         { //new block to let me define new vars
           real integral_value = residual + 0.5 * synthesis[time];
-          predicted_expression[t,time] = basal_over_degradation + (initial_condition[t] - basal_over_degradation) * exp(-degradation[t] * (time - 1)) + sensitivity[t] * integral_value;
+          predicted_expression[time,t] = basal_over_degradation + (initial_condition[t] - basal_over_degradation) * exp(-degradation[t] * (time - 1)) + sensitivity[t] * integral_value;
         }
 
       }
@@ -171,47 +195,55 @@ transformed parameters {
 
 model {
 
-
     //Observation model
     for(m in 1:num_measurements) {
-      vector[num_targets] sigma = measurement_sigma_absolute + measurement_sigma_relative * predicted_expression[,measurement_times[m]];
+      row_vector[num_targets] sigma = sigma_absolute + sigma_relative * predicted_expression[measurement_times[m],];
       for(t in 1:num_targets) {
-        expression[t, m] ~ normal(predicted_expression[t,measurement_times[m]], sigma[t]) T[0,];
+        expression[m, t] ~ normal(predicted_expression[measurement_times[m],t], sigma[t]) T[0,];
       }
 
-      if(regulator_measured != 0) {
-        real sigma_regulator = measurement_sigma_absolute + measurement_sigma_relative * predicted_regulator_expression[measurement_times[m]];
-        regulator_expression[m] ~ normal(predicted_regulator_expression[measurement_times[m]], sigma_regulator)  T[0,];
+      if(regulators_measured != 0) {
+        row_vector[num_regulators] sigma_regulator = sigma_absolute + sigma_relative * predicted_regulator_expression[measurement_times[m],];
+        for(r in 1:num_regulators) {
+          regulator_expression[m, r] ~ normal(predicted_regulator_expression[measurement_times[m], r], sigma_regulator[r])  T[0,];
+        }
       }
     }
 
     initial_condition ~ normal(0, initial_condition_prior_sigma);
-    coeffs ~ normal(0,1); //coeffs are rescaled by the scale parameter
+    for(r in 1:num_regulators) {
+      coeffs[,r] ~ normal(0,1); //coeffs are rescaled by the scale parameter
+    }
     intercept_raw ~ normal(0, 1);
     asymptotic_normalized_state ~ normal(1, asymptotic_normalized_state_prior_sigma);
 
     degradation ~ lognormal(degradation_prior_mean, degradation_prior_sigma);
     mean_regulatory_input_raw ~ normal(0, 1);
     sd_regulatory_input_raw ~ normal(0, 1);
+
+    if(sigma_given != 0) {
+      sigma_relative_param[1] ~ normal(sigma_relative_prior_mean[1], sigma_relative_prior_sigma[1]);
+      sigma_absolute_param[1] ~ normal(sigma_absolute_prior_mean[1], sigma_absolute_prior_sigma[1]);
+    }
 }
 
 generated quantities {
-  vector<lower=0>[num_measurements] expression_replicates[num_targets];
-  vector[num_measurements] log_likelihood[num_targets];
+  matrix<lower=0>[num_measurements, num_targets] expression_replicates;
+  matrix[num_measurements, num_targets] log_likelihood;
   vector[num_targets] b;
 
-  b = b_centered + (intercept * w);
+  b = b_centered + (w * intercept);
 
   for(m in 1:num_measurements) {
-    vector[num_targets] sigma = measurement_sigma_absolute + measurement_sigma_relative * predicted_expression[,measurement_times[m]];
+    row_vector[num_targets] sigma = sigma_absolute + sigma_relative * predicted_expression[measurement_times[m],];
     for(t in 1:num_targets) {
       //Draw from the truncated normal
       real lower_bound = 0;
-      real p = normal_cdf(lower_bound, predicted_expression[t,measurement_times[m]], sigma[t]);
+      real p = normal_cdf(lower_bound, predicted_expression[measurement_times[m],t], sigma[t]);
       real u = uniform_rng(p, 1);
-      expression_replicates[t,m] = inv_Phi(u) * sigma[t] + predicted_expression[t,measurement_times[m]];
+      expression_replicates[m, t] = inv_Phi(u) * sigma[t] + predicted_expression[measurement_times[m],t];
 
-      log_likelihood[t,m] = normal_lpdf(expression[t,m]| predicted_expression[t,measurement_times[m]], sigma[t]) - log_diff_exp(1, normal_lcdf(lower_bound | predicted_expression[t,measurement_times[m]], sigma[t]));
+      log_likelihood[m, t] = normal_lpdf(expression[m, t]| predicted_expression[measurement_times[m], t], sigma[t]) - log_diff_exp(1, normal_lcdf(lower_bound | predicted_expression[measurement_times[m],t], sigma[t]));
     }
   }
 }

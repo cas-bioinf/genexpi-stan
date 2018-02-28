@@ -67,7 +67,10 @@ plot_random_profiles <- function(n, time, scale, length, true_time = time, true_
 }
 
 
-simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, measurement_times, measurement_sigma_absolute, measurement_sigma_relative, regulator_measured = TRUE, integrate_ode45 = TRUE) {
+simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, measurement_times,
+                                             measurement_sigma_absolute_prior_sigma,
+                                             measurement_sigma_relative_prior_sigma,
+                                             regulator_measured = TRUE, integrate_ode45 = TRUE) {
   time <- 1:num_time;
 
   spline_degree = 3
@@ -109,17 +112,18 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
   }
 
 
-
+  measurement_sigma_relative <- abs(rnorm(1,0, measurement_sigma_relative_prior_sigma))
+  measurement_sigma_absolute <- abs(rnorm(1,0, measurement_sigma_absolute_prior_sigma))
 
   expression_true <- array(-1, c(num_targets,num_time))
   expression_observed <- array(-1, c(num_targets,length(measurement_times)))
 
-  mean_synthesis_prior_sigma <-  1
-  degradation_prior_mean <- -3
+  asymptotic_normalized_state_prior_sigma <-  0.5
+  degradation_prior_mean <- -2
   degradation_prior_sigma <- 1
   mean_regulatory_input_prior_sigma <- 5
-  sd_regulatory_input_prior_sigma <- 5
-  initial_condition_prior_sigma <- 1
+  sd_regulatory_input_prior_sigma <- 3
+  initial_condition_prior_sigma <- 2
 
   regulator_signs <- rbernoulli(num_targets) * 2 - 1 #Generates randomly -1 or 1
 
@@ -132,7 +136,7 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
   mean_synthesis <- array(-Inf, num_targets)
   mean_regulatory_input <- array(-Inf, num_targets)
   sd_regulatory_input <- array(-Inf, num_targets)
-
+  asymptotic_normalized_state <- array(-Inf, num_targets)
 
   n_rejections <- 0
   for(t in 1:num_targets) {
@@ -141,7 +145,9 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
       #The actual parameters
       mean_regulatory_input[t] <- rnorm(1, 0, mean_regulatory_input_prior_sigma)
       sd_regulatory_input[t] <- abs(rnorm(1, 0, sd_regulatory_input_prior_sigma))
-      mean_synthesis[t] <- abs(rnorm(1, 0, mean_synthesis_prior_sigma))
+      asymptotic_normalized_state[t] <- abs(rnorm(1, 0, asymptotic_normalized_state_prior_sigma))
+      degradation[t] <- rlnorm(1, degradation_prior_mean, degradation_prior_sigma)
+
 
       #The derived parameters
       w[t] <- regulator_signs[t] * sd_regulatory_input[t] / sd(regulator_profile)
@@ -149,12 +155,14 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
       b[t] <- b_centered[t] + (intercept * w[t])
 
       synthesis <- 1 / (1 + exp( -regulator_profile * w[t] - b_centered[t]))
+
+      #In the actual model, there is max(expression) instead of scale
+      mean_synthesis[t] <- asymptotic_normalized_state[t] * degradation[t] * scale
       sensitivity[t] <- mean_synthesis[t] / mean(synthesis)
 
       #degradation_over_sensitivity[t] <- rlnorm(1,0,1)
       #degradation[t] <- degradation_over_sensitivity[t] * sensitivity[t];
       #degradation[t] <- abs(rnorm(1, 0, degradation_prior_sigma))
-      degradation[t] <- rlnorm(1, degradation_prior_mean, degradation_prior_sigma)
 
       initial_condition[t] <- abs(rnorm(1, 0,initial_condition_prior_sigma))
 
@@ -166,16 +174,19 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
       }
 
       if(all(expression_true[t,] > 0)
-         && sd(expression_true[t,]) > 1
+         #&& sd(expression_true[t,]) > 0.5
          #&& any(expression_true[t,] > 2 * measurement_sigma_absolute)
-         && mean(diff(expression_true[t,]) > 1e-2) > 0.2 #Avoid monotonicity
-         && mean(diff(expression_true[t,]) < 1e-2) > 0.2
+         #&& mean(diff(expression_true[t,]) > 1e-2) > 0.2 #Avoid monotonicity
+         #&& mean(diff(expression_true[t,]) < 1e-2) > 0.2
       ) {
         break;
       }
       n_rejections <- n_rejections + 1
     }
     expression_observed[t,] <- rtruncnorm(length(measurement_times), mean = expression_true[t,measurement_times], sd =  measurement_sigma_absolute + measurement_sigma_relative * expression_true[t,measurement_times], a = 0)
+
+    #Hack around the fact that the actual model uses max(expression) to determine parameters (the model is non-generative in this sense)
+    asymptotic_normalized_state[t] <- mean_synthesis[t] / (degradation[t] * max(expression_observed[t,]))
   }
 
   cat(n_rejections, " rejections targets\n")
@@ -194,7 +205,9 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
       sensitivity = sensitivity,
       expression = expression_true,
       intercept = intercept,
-      degradation = degradation
+      degradation = degradation,
+      measurement_sigma_relative_param = array(measurement_sigma_relative,1),
+      measurement_sigma_absolute_param = array(measurement_sigma_absolute,1)
     ), observed = list(
       num_time = num_time,
       num_measurements = length(measurement_times),
@@ -213,11 +226,16 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
       expression = expression_observed,
       regulation_signs = regulator_signs,
       regulator_expression = if (regulator_measured) { regulator_expression_observed } else { numeric(0) },
-      measurement_sigma_absolute = measurement_sigma_absolute,
-      measurement_sigma_relative = measurement_sigma_relative,
+      measurement_sigma_given = 0,
+      measurement_sigma_absolute_prior_mean = array(0,1),
+      measurement_sigma_relative_prior_mean = array(0,1),
+      measurement_sigma_absolute_prior_sigma = array(measurement_sigma_absolute_prior_sigma,1),
+      measurement_sigma_relative_prior_sigma = array(measurement_sigma_relative_prior_sigma,1),
+      measurement_sigma_absolute_data = numeric(0),
+      measurement_sigma_relative_data = numeric(0),
       intercept_prior_sigma = if (regulator_measured) { array(intercept_prior_sigma, 1) } else {numeric(0)},
       initial_condition_prior_sigma = initial_condition_prior_sigma,
-      mean_synthesis_prior_sigma = mean_synthesis_prior_sigma,
+      asymptotic_normalized_state_prior_sigma = asymptotic_normalized_state_prior_sigma,
       degradation_prior_mean = degradation_prior_mean,
       degradation_prior_sigma = degradation_prior_sigma,
       mean_regulatory_input_prior_sigma = mean_regulatory_input_prior_sigma,

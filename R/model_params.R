@@ -1,0 +1,136 @@
+measurement_sigma_given <- function(sigma_absolute, sigma_relative) {
+  list(
+    sigma_given = 1,
+    sigma_absolute_data = array(sigma_absolute,1),
+    sigma_relative_data = array(sigma_relative,0),
+    sigma_relative_prior_mean = numeric(0),
+    sigma_absolute_prior_mean = numeric(0),
+    sigma_relative_prior_sigma = numeric(0),
+    sigma_absolute_prior_sigma = numeric(0)
+  )
+}
+
+measurement_sigma_prior <- function(sigma_absolute_prior_mean,
+                                    sigma_absolute_prior_sigma,
+                                    sigma_relative_prior_mean,
+                                    sigma_relative_prior_sigma) {
+  list(
+    sigma_given = 0,
+    sigma_absolute_data = numeric(0),
+    sigma_relative_data = numeric(0),
+    sigma_relative_prior_mean = array(sigma_relative_prior_mean,1),
+    sigma_absolute_prior_mean = array(sigma_absolute_prior_mean,1),
+    sigma_relative_prior_sigma = array(sigma_relative_prior_sigma,1),
+    sigma_absolute_prior_sigma = array(sigma_absolute_prior_sigma,1)
+  )
+}
+
+params_prior <- function(
+  initial_condition_prior_sigma,
+  asymptotic_normalized_state_prior_sigma,
+  mean_regulatory_input_prior_sigma,
+  sd_regulatory_input_prior_sigma,
+  degradation_prior_mean,
+  degradation_prior_sigma,
+  intercept_prior_sigma = NULL
+) {
+  list(
+    initial_condition_prior_sigma = initial_condition_prior_sigma,
+    asymptotic_normalized_state_prior_sigma = asymptotic_normalized_state_prior_sigma,
+    mean_regulatory_input_prior_sigma = mean_regulatory_input_prior_sigma,
+    sd_regulatory_input_prior_sigma = sd_regulatory_input_prior_sigma,
+    degradation_prior_mean = degradation_prior_mean,
+    degradation_prior_sigma = degradation_prior_sigma,
+
+    intercept_prior_sigma = if (is.null(intercept_prior_sigma)) { numeric(0) } else {array(intercept_prior_sigma, 1)}
+  )
+}
+
+force_to_expression_matrix <- function(x) {
+  if(is.matrix(x) || length(dim(x) == 2)) {
+    x
+  } else {
+    as.matrix(x, 1, length(x))
+  }
+}
+
+regulation_model_params <- function(
+  measurement_times,
+  spline_basis,
+  measurement_sigma,
+  params_prior,
+  scale,
+  regulation_signs = NULL,
+  target_expression = NULL,
+  regulator_signs = NULL,
+  regulator_expression = NULL,
+  coeffs_prior = NULL
+) {
+  #TODO Checks:
+  #expression has to be matrices (two dims)
+  #measurement_times are integers
+  #regulation signs is a matrix
+  #coeffs prior, measurement_sigma, params_prior are of correct type
+
+  if(is.null(regulator_expression) && is.null(target_expression)) {
+    stop("Some expression data has to be given")
+  }
+
+  if(!is.null(regulator_expression)) {
+    regulator_expression <- force_to_expression_matrix(regulator_expression)
+  }
+
+  if(!is.null(target_expression)) {
+    target_expression <- force_to_expression_matrix(target_expression)
+  }
+
+  num_spline_basis <- dim(spline_basis)[2]
+  if(is.null(regulation_signs)) {
+    if(!is.null(target_expression)) {
+      stop("When regulation_signs are not given, target_expression must not be set")
+    }
+    num_targets <- 0
+    num_regulators <- ncol(regulator_expression)
+  } else {
+    num_targets <- ncol(regulation_signs)
+    num_regulators <- nrow(regulation_signs)
+  }
+
+  if(is.null(regulator_expression) && length(params_prior$intercept_prior_sigma) > 0) {
+    params_prior$intercept_prior_sigma <- numeric(0)
+  }
+
+  if(!is.null(regulator_expression) && length(params_prior$intercept_prior_sigma) == 0) {
+    stop("When regulator_expression is given, the params_prior has to contain intercept_prior_sigma")
+  }
+
+
+  base_params <- list(
+    num_time = max(measurement_times),
+    num_measurements = length(measurement_times),
+    num_regulators = num_regulators,
+    num_targets = num_targets,
+    regulators_measured = if (is.null(regulator_expression)) { 0 } else { 1 },
+
+
+    measurement_times = measurement_times,
+
+    regulator_expression = if (is.null(regulator_expression)) { matrix(0, 0, num_regulators) } else { regulator_expression },
+    expression = if (is.null(target_expression)) { matrix(0, length(measurement_times), 0)} else { target_expression },
+    regulation_signs = regulation_signs,
+
+    num_spline_basis = num_spline_basis,
+    spline_basis = spline_basis,
+
+
+    coeffs_prior_given = 0,
+    coeffs_prior_mean = matrix(0,0,num_spline_basis),
+    coeffs_prior_cov = array(0, c(0, num_spline_basis, num_spline_basis)),
+
+
+
+    scale = scale
+  )
+
+  unlist(list(base_params, params_prior, measurement_sigma), recursive = FALSE)
+}
