@@ -1,8 +1,11 @@
+
+#IDEA: function print_assumptions that says what assumptions does the model make
+
 measurement_sigma_given <- function(sigma_absolute, sigma_relative) {
   list(
     sigma_given = 1,
     sigma_absolute_data = array(sigma_absolute,1),
-    sigma_relative_data = array(sigma_relative,0),
+    sigma_relative_data = array(sigma_relative,1),
     sigma_relative_prior_mean = numeric(0),
     sigma_absolute_prior_mean = numeric(0),
     sigma_relative_prior_sigma = numeric(0),
@@ -46,6 +49,24 @@ params_prior <- function(
   )
 }
 
+spline_params <- function(
+  spline_basis,
+  scale
+) {
+
+  num_spline_basis <- dim(spline_basis)[2]
+
+  list(
+    num_spline_basis = num_spline_basis,
+    spline_basis = spline_basis,
+    scale = scale,
+
+    coeffs_prior_given = 0,
+    coeffs_prior_mean = matrix(0,0,num_spline_basis),
+    coeffs_prior_cov = array(0, c(0, num_spline_basis, num_spline_basis))
+  )
+}
+
 force_to_expression_matrix <- function(x) {
   if(is.matrix(x) || length(dim(x) == 2)) {
     x
@@ -56,15 +77,12 @@ force_to_expression_matrix <- function(x) {
 
 regulation_model_params <- function(
   measurement_times,
-  spline_basis,
   measurement_sigma,
+  spline_params,
   params_prior,
-  scale,
   regulation_signs = NULL,
   target_expression = NULL,
-  regulator_signs = NULL,
-  regulator_expression = NULL,
-  coeffs_prior = NULL
+  regulator_expression = NULL
 ) {
   #TODO Checks:
   #expression has to be matrices (two dims)
@@ -84,13 +102,13 @@ regulation_model_params <- function(
     target_expression <- force_to_expression_matrix(target_expression)
   }
 
-  num_spline_basis <- dim(spline_basis)[2]
   if(is.null(regulation_signs)) {
     if(!is.null(target_expression)) {
       stop("When regulation_signs are not given, target_expression must not be set")
     }
     num_targets <- 0
     num_regulators <- ncol(regulator_expression)
+    regulation_signs <- matrix(0, num_regulators, 0)
   } else {
     num_targets <- ncol(regulation_signs)
     num_regulators <- nrow(regulation_signs)
@@ -117,20 +135,8 @@ regulation_model_params <- function(
 
     regulator_expression = if (is.null(regulator_expression)) { matrix(0, 0, num_regulators) } else { regulator_expression },
     expression = if (is.null(target_expression)) { matrix(0, length(measurement_times), 0)} else { target_expression },
-    regulation_signs = regulation_signs,
-
-    num_spline_basis = num_spline_basis,
-    spline_basis = spline_basis,
-
-
-    coeffs_prior_given = 0,
-    coeffs_prior_mean = matrix(0,0,num_spline_basis),
-    coeffs_prior_cov = array(0, c(0, num_spline_basis, num_spline_basis)),
-
-
-
-    scale = scale
+    regulation_signs = regulation_signs
   )
 
-  unlist(list(base_params, params_prior, measurement_sigma), recursive = FALSE)
+  unlist(list(base_params, spline_params, params_prior, measurement_sigma), recursive = FALSE)
 }

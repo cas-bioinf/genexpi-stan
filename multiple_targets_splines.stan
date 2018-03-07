@@ -28,7 +28,7 @@ data {
   real<lower = 0> degradation_prior_sigma;
 
   //Intercept is only important when regulator is measured, otherwise, it is hidden in b
-  real<lower = 0> intercept_prior_sigma[regulators_measured ? num_regulators : 0];
+  real<lower = 0> intercept_prior_sigma[regulators_measured ? 1 : 0];
 
 
   int<lower=0,upper=1> sigma_given;
@@ -141,25 +141,27 @@ transformed parameters {
       if(regulators_measured == 0) {
         intercept[r] = min_intercept;
       } else {
-        intercept[r] = min_intercept + intercept_raw[r] * intercept_prior_sigma[r];
+        intercept[r] = min_intercept + intercept_raw[r] * intercept_prior_sigma[1];
       }
       predicted_regulator_expression[,r] = regulator_profile[,r] + intercept[r];
     }
   }
 
 
-  mean_synthesis = asymptotic_normalized_state  .* degradation .* max_target_expression;
-  mean_regulatory_input = mean_regulatory_input_raw * mean_regulatory_input_prior_sigma;
-  sd_regulatory_input = sd_regulatory_input_raw * sd_regulatory_input_prior_sigma;
-  {
-    vector[num_regulators] mean_regulator_profile;
-    for(r in 1:num_regulators)
+  if(num_targets > 0) {
+    mean_synthesis = asymptotic_normalized_state  .* degradation .* max_target_expression;
+    mean_regulatory_input = mean_regulatory_input_raw * mean_regulatory_input_prior_sigma;
+    sd_regulatory_input = sd_regulatory_input_raw * sd_regulatory_input_prior_sigma;
     {
-      real sd_regulator_profile = sd(regulator_profile[,r]);
-      mean_regulator_profile[r] = mean(regulator_profile[,r]);
-      w[,r] = regulation_signs_real[r,] .* (sd_regulatory_input ./ sd_regulator_profile) .* to_vector(relative_weights[,r]);
+      vector[num_regulators] mean_regulator_profile;
+      for(r in 1:num_regulators)
+      {
+        real sd_regulator_profile = sd(regulator_profile[,r]);
+        mean_regulator_profile[r] = mean(regulator_profile[,r]);
+        w[,r] = regulation_signs_real[r,] .* (sd_regulatory_input ./ sd_regulator_profile) .* to_vector(relative_weights[,r]);
+      }
+      b_centered = mean_regulatory_input - w * mean_regulator_profile;
     }
-    b_centered = mean_regulatory_input - w * mean_regulator_profile;
   }
 
   for(t in 1:num_targets)
@@ -221,7 +223,7 @@ model {
     mean_regulatory_input_raw ~ normal(0, 1);
     sd_regulatory_input_raw ~ normal(0, 1);
 
-    if(sigma_given != 0) {
+    if(sigma_given == 0) {
       sigma_relative_param[1] ~ normal(sigma_relative_prior_mean[1], sigma_relative_prior_sigma[1]);
       sigma_absolute_param[1] ~ normal(sigma_absolute_prior_mean[1], sigma_absolute_prior_sigma[1]);
     }
@@ -232,18 +234,20 @@ generated quantities {
   matrix[num_measurements, num_targets] log_likelihood;
   vector[num_targets] b;
 
-  b = b_centered + (w * intercept);
+  if(num_targets > 0) {
+    b = b_centered + (w * intercept);
 
-  for(m in 1:num_measurements) {
-    row_vector[num_targets] sigma = sigma_absolute + sigma_relative * predicted_expression[measurement_times[m],];
-    for(t in 1:num_targets) {
-      //Draw from the truncated normal
-      real lower_bound = 0;
-      real p = normal_cdf(lower_bound, predicted_expression[measurement_times[m],t], sigma[t]);
-      real u = uniform_rng(p, 1);
-      expression_replicates[m, t] = inv_Phi(u) * sigma[t] + predicted_expression[measurement_times[m],t];
+    for(m in 1:num_measurements) {
+      row_vector[num_targets] sigma = sigma_absolute + sigma_relative * predicted_expression[measurement_times[m],];
+      for(t in 1:num_targets) {
+        //Draw from the truncated normal
+        real lower_bound = 0;
+        real p = normal_cdf(lower_bound, predicted_expression[measurement_times[m],t], sigma[t]);
+        real u = uniform_rng(p, 1);
+        expression_replicates[m, t] = inv_Phi(u) * sigma[t] + predicted_expression[measurement_times[m],t];
 
-      log_likelihood[m, t] = normal_lpdf(expression[m, t]| predicted_expression[measurement_times[m], t], sigma[t]) - log_diff_exp(1, normal_lcdf(lower_bound | predicted_expression[measurement_times[m],t], sigma[t]));
+        log_likelihood[m, t] = normal_lpdf(expression[m, t]| predicted_expression[measurement_times[m], t], sigma[t]) - log_diff_exp(1, normal_lcdf(lower_bound | predicted_expression[measurement_times[m],t], sigma[t]));
+      }
     }
   }
 }

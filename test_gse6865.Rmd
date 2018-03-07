@@ -49,10 +49,25 @@ rm(temp)
 ```{r}
 measurement_times = floor(gse6865_raw_time / 2) + 1
 smooth_time  <- seq(0,100, by = 2)
+expression_data <- gse6865_raw
+
 spline_df <- 6
 spline_basis <- bs(smooth_time, degree = 3, df = spline_df)
-num_spline_basis <- dim(spline_basis)[1]
-expression_data <- gse6865_raw
+sigB_spline_params <- spline_params(
+  spline_basis = spline_basis,
+  scale = 5
+)
+
+sigB_params_prior <-  params_prior(
+  initial_condition_prior_sigma = 2,
+  asymptotic_normalized_state_prior_sigma = 0.5,
+  degradation_prior_mean = -2,
+  degradation_prior_sigma = 1,
+  mean_regulatory_input_prior_sigma = 5,
+  sd_regulatory_input_prior_sigma =5,
+  intercept_prior_sigma = 2
+)
+
 ```
 
 #Estimate sigma_absolute
@@ -85,6 +100,34 @@ ggplot(data.frame(x = sigma_absolute_samples), aes(x=x)) + geom_density() +
 ```{r}
 multiple_targets_model <- stan_model(file = 'multiple_targets_splines.stan')
 ```
+
+#Estimate sigma with splines
+```{r}
+
+sources <- c("sigA","sigB", sample(rownames(expression_data), 5))
+
+data_sigma_estimate <- regulation_model_params(
+  measurement_times = measurement_times,
+  regulator_expression = t(expression_data[sources,]),
+  measurement_sigma = measurement_sigma_prior(
+      sigma_absolute_prior_mean = 0,
+      sigma_relative_prior_mean = 0,
+      sigma_absolute_prior_sigma = 0.1,
+      sigma_relative_prior_sigma = 0.2
+  ),
+  params_prior = sigB_params_prior,
+  spline_params = sigB_spline_params
+)
+
+fit_sigma_estimate <- sampling(multiple_targets_model, data = data_sigma_estimate, control = list(adapt_delta = 0.95))
+
+summary(fit_sigma_estimate, pars = c("sigma_relative_param","sigma_absolute_param"))$summary
+
+for(s in 1:length(sources)) {
+  print(fitted_regulator_plot(fit_sigma_estimate, data_sigma_estimate, s))
+}
+```
+
 
 #With known regulator
 
@@ -127,60 +170,36 @@ data <- list(
 fit <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
 print(summary(fit, pars = c("coeffs", "intercept","initial_condition","sensitivity","degradation","w","b"))$summary)
 
-num_samples <- 100
-main_geom <- geom_line(alpha = 0.2)
-samples_to_show <-  sample(1:4000, num_samples)
-samples_regulator <- rstan::extract(fit,"predicted_regulator_expression")$predicted_regulator_expression[samples_to_show,]
-
-regulator_plot <- ggmatplot(1:data$num_time, t(samples_regulator), main_geom = main_geom) + ggtitle(paste0("Regulator - ", source))
-
-if(data$regulator_measured != 0) {
-  regulator_plot <- regulator_plot + geom_point(data = data.frame(x = data$measurement_times,  y = data$regulator_expression), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3)
-}
 print(regulator_plot)
 ```
 
 # Improved splining where target info is use
 
-```{r}
-```
 
 ```{r}
-multiple_targets_model <- stan_model(file = 'multiple_targets_splines.stan')
-
 source <- "sigA"
 #source <- "sigB"
 targets <- c("codY","clpQ","yqxD","yhdL", "comA","codV","comEB", "dnaG", "ftsA","hemD","acsA","acuB")
 #targets <- c("codY","clpQ","yqxD")
 
-sigB_params_prior <-  params_prior(
-  initial_condition_prior_sigma = 2,
-  asymptotic_normalized_state_prior_sigma = 0.5,
-  degradation_prior_mean = -2,
-  degradation_prior_sigma = 1,
-  mean_regulatory_input_prior_sigma = 5,
-  sd_regulatory_input_prior_sigma =5,
-  intercept_prior_sigma = 2
-)
-
 
 data_source <- regulation_model_params(
   measurement_times = measurement_times,
-  spline_basis = spline_basis,
   target_expression = t(expression_data[targets,]),
   regulator_expression = expression_data[source,],
-  measurement_sigma = measurement_sigma_prior(
-      sigma_absolute_prior_mean = 0,
-      sigma_relative_prior_mean = 0,
-      sigma_absolute_prior_sigma = 0.1,
-      sigma_relative_prior_sigma = 0.2
-  ),
+  # measurement_sigma = measurement_sigma_prior(
+  #     sigma_absolute_prior_mean = 0,
+  #     sigma_relative_prior_mean = 0,
+  #     sigma_absolute_prior_sigma = 0.1,
+  #     sigma_relative_prior_sigma = 0.2
+  # ),
+  measurement_sigma = measurement_sigma_given(0.1,0.2),
+  spline_params = sigB_spline_params,
   params_prior = sigB_params_prior,
-  scale = 5,
   regulation_signs = matrix(1, 1, length(targets))
 )
 
-fit_source <- sampling(multiple_targets_model, data = data_source, control = list(adapt_delta = 0.95), chains =1)
+fit_source <- sampling(multiple_targets_model, data = data_source, control = list(adapt_delta = 0.95))
 
 #print(summary(fit_source, pars = c("sensitivity","degradation","w","b","sigma_absolute_param","sigma_relative_param"))$summary)
 
@@ -197,11 +216,9 @@ if(data_source$regulators_measured != 0) {
 }
 print(regulator_plot)
  
-samples_expression <- rstan::extract(fit_source,"predicted_expression")$predicted_expression[samples_to_show,,,drop=FALSE]
 samples_expression_replicates <- rstan::extract(fit_source,"expression_replicates")$expression_replicates[samples_to_show,,,drop=FALSE]
 for(target in 1:length(targets)) {
-  print(ggmatplot(1:data_source$num_time, t(samples_expression[,,target]), main_geom = main_geom, x_title = "time", y_title = "expression") +
-    geom_point(data = data.frame(x = data_source$measurement_times,  y = data_source$expression[,target]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Expression - ", targets[target])))
+
   
   print(ggmatplot(data_source$measurement_times, t(samples_expression_replicates[,,target]), main_geom = main_geom, x_title = "time", y_title = "expression") +
     geom_point(data = data.frame(x = data_source$measurement_times,  y = data_source$expression[,target]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Replicates - ", targets[target])))
@@ -216,7 +233,7 @@ for(target in 1:length(targets)) {
 
 ```{r}
 pairs(fit_source, pars = "coeffs")
-samples_coeffs <- rstan::extract(fit_source,"coeffs")$coeffs
+samples_coeffs <- rstan::extract(fit_source,"coeffs")$coeffs[,,1]
 uniPlot(samples_coeffs, type ="qqplot")
 uniPlot(samples_coeffs, type = "histogram")
 mardiaTest(samples_coeffs, qqplot = TRUE)
