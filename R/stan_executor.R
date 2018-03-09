@@ -1,10 +1,18 @@
 sampling_multi_filename <- function(output.dir, id, chain) {
-  paste0(output.dir, "/stan_out_",id,"_c",chain,".csv")
+  file.path(output.dir, paste0("stan_out_",id,"_c",chain,".csv"))
 }
 
 sampling_multi <- function(model, data, output.dir, chains = 4, cores = parallel::detectCores(), ...) {
   cl <- parallel::makeCluster(cores, useXDR = FALSE)
   on.exit(parallel::stopCluster(cl))
+
+  if(!dir.exists(output.dir)) {
+    warning(paste0("The directory ", output.dir, " does not exist, creating."))
+    dir.create(output.dir)
+    if(!dir.exists(output.dir)) {
+      stop("Could not create output directory")
+    }
+  }
 
 #  objects <- ls()
   fit_fun <- function(i) {
@@ -47,4 +55,8 @@ sampling_multi <- function(model, data, output.dir, chains = 4, cores = parallel
     results[[i]] <- results_flat[ids == i]
   }
   results
+}
+
+sampling_multi_read_fit <- function(results, index) {
+
 }

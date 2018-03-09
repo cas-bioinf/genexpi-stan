@@ -30,7 +30,7 @@ fitted_regulator_plot <- function(fit, data, regulator = 1,
   regulator_plot
 }
 
-fitted_target_plot <- function(fit, data, target = 1,
+fitted_target_plot <- function(fit, data, target = 1, name = "",
                                num_samples = default_expression_plot_num_samples,
                                main_geom = default_expression_plot_main_geom) {
 
@@ -51,6 +51,6 @@ fitted_target_plot <- function(fit, data, target = 1,
           geom_point(
             data = data.frame(x = data_source$measurement_times,  y = data_source$expression[,target]),
             aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) +
-    ggtitle(paste0("Expression - ", targets[target]))
+    ggtitle(paste0("Expression - ", name))
 
 }

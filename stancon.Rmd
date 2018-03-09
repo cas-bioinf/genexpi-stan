@@ -35,3 +35,5 @@ Reducing actual posterior to multivariate normal and using to fit other genes.
 WAIC to quickly assess fit quality
 
 
+How high is the level of technical noise in microarray data? (https://biologydirect.biomedcentral.com/articles/10.1186/1745-6150-2-9) 
+suggests that technical variation is constant (and with sigma around 0.1). But we also have biological variability / stochasticity, that is proportional.

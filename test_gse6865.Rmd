@@ -177,8 +177,8 @@ print(regulator_plot)
 
 
 ```{r}
-source <- "sigA"
-#source <- "sigB"
+#source <- "sigA"
+source <- "sigB"
 targets <- c("codY","clpQ","yqxD","yhdL", "comA","codV","comEB", "dnaG", "ftsA","hemD","acsA","acuB")
 #targets <- c("codY","clpQ","yqxD")
 
@@ -224,6 +224,39 @@ for(target in 1:length(targets)) {
     geom_point(data = data.frame(x = data_source$measurement_times,  y = data_source$expression[,target]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Replicates - ", targets[target])))
   
 }
+```
+
+##Testing the executor
+```{r}
+source <- "sigA"
+#source <- "sigB"
+targets <- c("codY","clpQ","yqxD","yhdL", "comA","codV","comEB", "dnaG", "ftsA","hemD","acsA","acuB")
+#targets <- c("codY","clpQ","yqxD")
+
+
+test_data_1 <- regulation_model_params(
+  measurement_times = measurement_times,
+  target_expression = t(expression_data[targets,]),
+  regulator_expression = expression_data[source,],
+  measurement_sigma = measurement_sigma_given(0.1,0.2),
+  spline_params = sigB_spline_params,
+  params_prior = sigB_params_prior,
+  regulation_signs = matrix(1, 1, length(targets))
+)
+
+source <- "sigB"
+
+test_data_2 <- regulation_model_params(
+  measurement_times = measurement_times,
+  target_expression = t(expression_data[targets,]),
+  regulator_expression = expression_data[source,],
+  measurement_sigma = measurement_sigma_given(0.1,0.2),
+  spline_params = sigB_spline_params,
+  params_prior = sigB_params_prior,
+  regulation_signs = matrix(1, 1, length(targets))
+)
+
+sampling_multi(multiple_targets_model, list(test_data_1, test_data_2), output.dir = "out", cores = 4, iter = 5)
 ```
 
 

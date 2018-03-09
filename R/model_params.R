@@ -49,6 +49,43 @@ params_prior <- function(
   )
 }
 
+coeffs_prior_default <- function(num_spline_basis) {
+  list(
+    coeffs_prior_given = 0,
+    coeffs_prior_mean = matrix(0,0,num_spline_basis),
+    coeffs_prior_cov = array(0, c(0, num_spline_basis, num_spline_basis))
+  )
+
+}
+
+coeffs_prior_given <- function(coeffs_prior_mean, coeffs_prior_cov) {
+  list(
+    coeffs_prior_given = 1,
+    coeffs_prior_mean = coeffs_prior_mean,
+    coeffs_prior_cov = coeffs_prior_cov
+  )
+}
+
+coeffs_prior_from_fit <- function(fit, covariance_scale = 0.5) {
+  samples_coeffs <- rstan::extract(fit_source,"coeffs")$coeffs
+  num_regulators <- dim(samples_coeffs)[3]
+  num_spline_basis <- dim(samples_coeffs)[2]
+
+  coeffs_prior_mean <- array(-1, c(num_regulators,num_spline_basis))
+  coeffs_prior_cov <- array(-1, c(num_regulators,num_spline_basis, num_spline_basis))
+
+  for(r in 1:num_regulators) {
+    coeffs_prior_cov[r,,] <- covariance_scale * cov(samples_coeffs[,,r])
+    coeffs_prior_mean[r,] <- colMeans(samples_coeffs[,,r])
+  }
+
+  coeffs_prior_given(
+    coeffs_prior_mean = coeffs_prior_mean,
+    coeffs_prior_cov = coeffs_prior_cov
+  )
+
+}
+
 spline_params <- function(
   spline_basis,
   scale
@@ -59,11 +96,7 @@ spline_params <- function(
   list(
     num_spline_basis = num_spline_basis,
     spline_basis = spline_basis,
-    scale = scale,
-
-    coeffs_prior_given = 0,
-    coeffs_prior_mean = matrix(0,0,num_spline_basis),
-    coeffs_prior_cov = array(0, c(0, num_spline_basis, num_spline_basis))
+    scale = scale
   )
 }
 
@@ -82,7 +115,8 @@ regulation_model_params <- function(
   params_prior,
   regulation_signs = NULL,
   target_expression = NULL,
-  regulator_expression = NULL
+  regulator_expression = NULL,
+  coeffs_prior = coeffs_prior_default(spline_params$num_spline_basis)
 ) {
   #TODO Checks:
   #expression has to be matrices (two dims)
@@ -138,5 +172,5 @@ regulation_model_params <- function(
     regulation_signs = regulation_signs
   )
 
-  unlist(list(base_params, spline_params, params_prior, measurement_sigma), recursive = FALSE)
+  unlist(list(base_params, spline_params, params_prior, measurement_sigma, coeffs_prior), recursive = FALSE)
 }

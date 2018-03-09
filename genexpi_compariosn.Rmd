@@ -1,0 +1,186 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r setup}
+library(rstan)
+rstan_options(auto_write = TRUE)
+#options(mc.cores = parallel::detectCores())
+options(mc.cores = 3)
+library(tidyverse)
+library(loo)
+library(MVN)
+library(bayesplot)
+```
+
+
+# Load the sigB data from GSE6865
+
+The original source of data: (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE6865)
+
+```{r}
+temp <- tempfile();
+download.file("ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE6nnn/GSE6865/matrix/GSE6865_series_matrix.txt.gz", temp)
+gse6865_raw_df = read.delim(gzfile(temp), comment.char = "!") #Intermediate data frame representation
+
+# Raw profile data. We scale by 1000 to get to more wieldy values
+gse6865_raw = as.matrix(gse6865_raw_df[,2:15]) / 1000
+rownames(gse6865_raw) = gse6865_raw_df$ID_REF
+
+#Times (in minutes) for the individual samples
+gse6865_raw_time = c(0,5,10,15,20,25,30,40,50,60,70,80,90,100)
+colnames(gse6865_raw) <- sapply(gse6865_raw_time,  FUN = function(x) { paste0(x,"min")})
+
+# For the first measurement, we can expect the value to be 0 (the series are from germination)
+gse6865_raw[is.na(gse6865_raw[,1]),1] = 0
+
+# For the second measurement we will go with a linear interpolation
+na2 = is.na(gse6865_raw[,2])
+gse6865_raw[na2,2] = 0.5 * gse6865_raw[na2,1] + 0.5 * gse6865_raw[na2,3]
+
+#cleanup the intermediate results
+rm(gse6865_raw_df)
+rm(na2)
+rm(temp)
+
+# Genes in the regulon according to http://subtiwiki.uni-goettingen.de/wiki/index.php/SigB_regulon as of 2017-02-09
+sigBRegulonNames = c("aag", "aldY", "bmr", "bmrR", "bmrU", "bofC", "cdd", "chaA", "clpC", "clpP", "corA", "csbA", "csbB", "csbC", "csbD", "csbX", "ctc", "ctsR", "cypC", "disA", "dps", "era", "gabD", "gsiB", "gspA", "gtaB", "guaD", "hpf", "iolW", "ispD", "ispF", "katE", "katX", "mcsA", "mcsB", "mgsR", "mhqO", "mhqP", "nadE", "nhaX", "ohrB", "opuE", "phoP", "phoR", "plsC", "radA", "rnr", "rpmEB", "rsbRD", "rsbV", "rsbW", "rsbX",  "sodA", "spo0E", "spoVC", "spx", "trxA", "yaaH", "yaaI", "yacL", "ybyB", "ycbP", "ycdF", "ycdG", "yceC", "yceD", "yceE", "yceF", "yceG", "yceH", "ydaD", "ydaE", "ydaF", "ydaG", "ydaJ", "ydaK", "ydaL", "ydaM", "ydaN", "ydaP", "ydaS", "ydaT", "ydbD", "ydeC", "ydhK", "yerD", "yfhD", "yfhE", "yfhF", "yfhK", "yfhL", "yfhM", "yfkD", "yfkH", "yfkI", "yfkJ", "yfkM", "yfkS", "yfkT", "yflA", "yflH", "yflT", "ygxB", "yhcM", "yhdF", "yhdN", "yhxD", "yitT", "yjbC", "yjgB", "yjgC", "yjgD", "yjzE", "ykgA", "ykgB", "ykuT", "ykzI", "ylxP", "ymzB", "yoaA", "yocB", "yocK", "yoxB", "yoxC", "ypuB", "ypuC", "ypuD", "yqhB", "yqhP", "yqhQ", "yqjL", "yraA", "ysdB", "ysnF", "ytaB", "ytkL", "ytxG", "ytxH", "ytxJ", "yugU", "yuzA", "yvaK", "yvgN", "yvgO", "yvrE", "ywiE", "ywjC", "ywlB", "ywmE", "ywmF", "ywsB", "ywtG", "ywzA", "yxaB", "yxbG", "yxiS", "yxjI", "yxjJ", "yxkO", "yxnA", "yxzF", "yycD", "yczO", "ydaC", "yebE", "yebG", "yflD", "yflB", "yisP", "ipi", "yjlB", "ykzN", "spo0E", "yktC", "ykzC", "rbfA", "ytkC", "ytiB", "menC", "menE", "yuzH", "yvbG", "yvzE", "ywsA", "ywjA", "yydC", "yyzG", "yyzH", "yybO")
+
+
+```
+```{r}
+multiple_targets_model <- stan_model(file = 'multiple_targets_splines.stan')
+
+```
+
+
+## Set default parameters
+```{r}
+measurement_times = floor(gse6865_raw_time / 2) + 1
+smooth_time  <- seq(0,100, by = 2)
+expression_data <- gse6865_raw
+
+spline_df <- 6
+spline_basis <- bs(smooth_time, degree = 3, df = spline_df)
+sigB_spline_params <- spline_params(
+  spline_basis = spline_basis,
+  scale = 5
+)
+
+sigB_params_prior <-  params_prior(
+  initial_condition_prior_sigma = 2,
+  asymptotic_normalized_state_prior_sigma = 0.5,
+  degradation_prior_mean = -2,
+  degradation_prior_sigma = 1,
+  mean_regulatory_input_prior_sigma = 5,
+  sd_regulatory_input_prior_sigma =5,
+  intercept_prior_sigma = 2
+)
+
+measurement_sigma <- measurement_sigma_given(0.1,0.2)
+
+control = list(adapt_delta = 0.95)
+```
+
+
+## Fit the regulator model
+The regulations are taken from:
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC95453/
+
+aldY, bmr, bmrR, bmrU, bofC, clpP, csbA, csbB, csbD, csbX, ctc, dps, gsiB, gspA, gtaB, katB, katX, nadE, rsbV, rsbW, rsbX, sigB, yacL, ycdF, ydaD, ydaE, ydaG, ydaP, ydaS, ydaT, ydbD, ydbP, ydhK, yfhK, yfkM, yflA, yflT, yhdF, yhdN, yhxD, yjbC, yjgB, yjgC, ykgA, ykzA, yocK, yotK, yoxA, yoxC, ypuB, yqhA, yqhQ, yqxL, yrvD, ysnF, ytkL, yugU, yvrE, yxaB, yxbG, yxcC, yxkO, and yycD
+
+```{r}
+source <- "sigB"
+training_targets <- c("ydaD","bmrU","bofC")
+
+
+data_source <- regulation_model_params(
+  measurement_times = measurement_times,
+  target_expression = t(expression_data[training_targets,]),
+  regulator_expression = expression_data[source,],
+  measurement_sigma = measurement_sigma,
+  spline_params = sigB_spline_params,
+  params_prior = sigB_params_prior,
+  regulation_signs = matrix(1, 1, length(training_targets))
+)
+
+fit_source <- sampling(multiple_targets_model, data = data_source, control = control)
+
+fitted_regulator_plot(fit_source, data_source)
+
+for(t in 1:length(training_targets)) {
+  print(fitted_target_plot(fit_source, data_source, target = t, name = training_targets[t]))
+}
+```
+
+```{r}
+candidate_genes <- setdiff(sigBRegulonNames, c("sigB",training_targets))
+candidate_genes <- candidate_genes[ candidate_genes %in% rownames(gse6865_raw)]
+
+#Subsampling - just for early testing
+candidate_genes <- candidate_genes[sample(1:length(candidate_genes), 10)]
+
+data_genes <- list()
+for(t in 1:length(candidate_genes)) {
+  data_genes[[t]] <- regulation_model_params(
+    measurement_times = measurement_times,
+    target_expression = expression_data[candidate_genes[t],],
+    coeffs_prior = coeffs_prior_from_fit(fit_source),
+    measurement_sigma = measurement_sigma,
+    spline_params = sigB_spline_params,
+    params_prior = sigB_params_prior,
+    regulation_signs = matrix(1, 1, 1)
+  )
+}
+
+sampling_multi(multiple_targets_model, data_genes, "sigB_eval", control = control)
+
+```
+
+```{r}
+num_trials <- 10
+
+sigBRandomScale <- 7
+sigBRandomLength <- 20
+
+training_fits <- list()
+training_data <- list()
+random_results <- list()
+for(trial in 1:num_trials) { 
+  #I use time divided by two
+  regulator_profile <- generate_random_profile(seq(0, max(gse6865_raw_time), by = 2), sigBRandomScale, sigBRandomLength)
+  
+  training_data[[trial]] <- simulate_multiple_targets_spline(
+    num_targets = length(training_targets), 
+    num_time = max(measurement_times), 
+    spline_basis = spline_basis, 
+    measurement_times = measurement_times, 
+    measurement_sigma_absolute = measurement_sigma$sigma_absolute_data, 
+    measurement_sigma_relative = measurement_sigma$sigma_relative_data,
+    regulator_profile = regulator_profile,
+    regulation_signs = 1
+    )
+
+  training_fits[[trial]] <- sampling(multiple_targets_model, data = training_data[[trial]]$observed, control = control)
+  
+  data_genes <- list()
+  for(t in 1:length(candidate_genes)) {
+    data_genes[[t]] <- regulation_model_params(
+      measurement_times = measurement_times,
+      target_expression = expression_data[candidate_genes[t],],
+      coeffs_prior = coeffs_prior_from_fit(training_fits[[trial]]),
+      measurement_sigma = measurement_sigma,
+      spline_params = sigB_spline_params,
+      params_prior = sigB_params_prior,
+      regulation_signs = matrix(1, 1, 1)
+    )
+  }
+  
+  random_results[[trial]] <- sampling_multi(multiple_targets_model, data_genes,file.path("sigB_eval",paste0("random_",trial)), control = control)
+  
+}
+
+```
+

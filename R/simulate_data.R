@@ -67,40 +67,51 @@ plot_random_profiles <- function(n, time, scale, length, true_time = time, true_
 }
 
 
-simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, measurement_times,
-                                             measurement_sigma_absolute_prior_sigma,
-                                             measurement_sigma_relative_prior_sigma,
+simulate_multiple_targets_spline <- function(num_targets, num_time, measurement_times,
+                                             num_df = NULL,
+                                             spline_basis = NULL,
+                                             measurement_sigma_absolute_prior_sigma = NULL,
+                                             measurement_sigma_relative_prior_sigma = NULL,
+                                             measurement_sigma_absolute = NULL,
+                                             measurement_sigma_relative = NULL,
+                                             regulator_profile = NULL,
+                                             regulation_signs = NULL,
                                              regulator_measured = TRUE, integrate_ode45 = TRUE) {
   time <- 1:num_time;
 
-  spline_degree = 3
-  knots <- seq(from = 1, to = num_time, length.out = num_knots)
-  spline_basis <- bs(1:num_time, knots = knots, degree = spline_degree)
+  if(is.null(spline_basis)) {
+    spline_degree = 3
+    spline_basis <- bs(1:num_time, df = num_df, degree = spline_degree)
 
-  num_coeff <- dim(spline_basis)[2] - 1
-  if(any(spline_basis[,num_coeff + 1] != 0)) {
-    stop("Broken assumption of zero column in bs output")
+    num_coeff <- dim(spline_basis)[2] - 1
+    if(any(spline_basis[,num_coeff + 1] != 0)) {
+      stop("Broken assumption of zero column in bs output")
+    }
+    spline_basis = spline_basis[,1:num_coeff]
   }
-  spline_basis = spline_basis[,1:num_coeff]
 
   scale <- 5
 
   #Rejection sampling to get interesting profile
   n_rejections <- 0
-  repeat {
-    coeffs <- rnorm(num_coeff, 0, 1)
-    regulator_profile <- array((spline_basis %*% coeffs)  * scale, num_time)
-    if(sd(regulator_profile) > 1
-       && sd(regulator_profile[1:floor(num_time / 2)]) > 1
-       && sd(regulator_profile[ceiling(num_time / 2):num_time]) > 1
-       && mean(diff(regulator_profile) > 1e-2) > 0.2 #Avoid monotonicity
-       && mean(diff(regulator_profile) < 1e-2) > 0.2
-    ) {
-      break;
+  if(is.null(regulator_profile)) {
+    repeat {
+      coeffs <- rnorm(num_coeff, 0, 1)
+      regulator_profile <- array((spline_basis %*% coeffs)  * scale, num_time)
+      if(sd(regulator_profile) > 1
+         && sd(regulator_profile[1:floor(num_time / 2)]) > 1
+         && sd(regulator_profile[ceiling(num_time / 2):num_time]) > 1
+         && mean(diff(regulator_profile) > 1e-2) > 0.2 #Avoid monotonicity
+         && mean(diff(regulator_profile) < 1e-2) > 0.2
+      ) {
+        break;
+      }
+      n_rejections <- n_rejections + 1
     }
-    n_rejections <- n_rejections + 1
+    cat(n_rejections, " rejections regulator\n")
+  } else {
+    coeffs <- array(0, dim(spline_basis)[2])
   }
-  cat(n_rejections, " rejections regulator\n")
 
   min_intercept <-  -min(regulator_profile)
   if(regulator_measured) {
@@ -112,8 +123,16 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
   }
 
 
-  measurement_sigma_relative <- abs(rnorm(1,0, measurement_sigma_relative_prior_sigma))
-  measurement_sigma_absolute <- abs(rnorm(1,0, measurement_sigma_absolute_prior_sigma))
+  if(is.null(measurement_sigma_absolute)) {
+    if(!is.null(measurement_sigma_relative)) {
+      stop("Both sigma have to be null")
+    }
+    measurement_sigma_absolute <- abs(rnorm(1,0, measurement_sigma_absolute_prior_sigma))
+    measurement_sigma_relative <- abs(rnorm(1,0, measurement_sigma_relative_prior_sigma))
+    measurement_sigma <- measurement_sigma_prior(0, measurement_sigma_absolute_prior_sigma, 0, measurement_sigma_relative_prior_sigma)
+  } else {
+    measurement_sigma <- measurement_sigma_given(sigma_absolute = measurement_sigma_absolute, sigma_relative = measurement_sigma_relative)
+  }
 
   expression_true <- array(-1, c(num_targets,num_time))
   expression_observed <- array(-1, c(num_targets,length(measurement_times)))
@@ -125,7 +144,11 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
   sd_regulatory_input_prior_sigma <- 3
   initial_condition_prior_sigma <- 2
 
-  regulator_signs <- rbernoulli(num_targets) * 2 - 1 #Generates randomly -1 or 1
+  if(is.null(regulation_signs)) {
+    regulation_signs <- rbernoulli(num_targets) * 2 - 1 #Generates randomly -1 or 1
+  } else if(length(regulation_signs) == 1) {
+    regulation_signs <- array(regulation_signs, num_targets)
+  }
 
   b_centered <- array(-Inf, num_targets)
   b <- array(-Inf, num_targets)
@@ -150,7 +173,7 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
 
 
       #The derived parameters
-      w[t] <- regulator_signs[t] * sd_regulatory_input[t] / sd(regulator_profile)
+      w[t] <- regulation_signs[t] * sd_regulatory_input[t] / sd(regulator_profile)
       b_centered[t] <- mean_regulatory_input[t] - w[t] * mean(regulator_profile)
       b[t] <- b_centered[t] + (intercept * w[t])
 
@@ -183,7 +206,10 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
       }
       n_rejections <- n_rejections + 1
     }
-    expression_observed[t,] <- rtruncnorm(length(measurement_times), mean = expression_true[t,measurement_times], sd =  measurement_sigma_absolute + measurement_sigma_relative * expression_true[t,measurement_times], a = 0)
+    expression_observed[t,] <- rtruncnorm(length(measurement_times),
+                                          mean = expression_true[t,measurement_times],
+                                          sd =  c(measurement_sigma_absolute) + c(measurement_sigma_relative) * expression_true[t,measurement_times],
+                                          a = 0)
 
     #Hack around the fact that the actual model uses max(expression) to determine parameters (the model is non-generative in this sense)
     asymptotic_normalized_state[t] <- mean_synthesis[t] / (degradation[t] * max(expression_observed[t,]))
@@ -192,7 +218,10 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
   cat(n_rejections, " rejections targets\n")
 
   regulator_expression_true <- regulator_profile + intercept
-  regulator_expression_observed <- rtruncnorm(length(measurement_times), mean = regulator_expression_true[measurement_times], sd =  measurement_sigma_absolute + measurement_sigma_relative * regulator_expression_true[measurement_times], a = 0)
+  regulator_expression_observed <- rtruncnorm(length(measurement_times),
+                                              mean = regulator_expression_true[measurement_times],
+                                              sd =  c(measurement_sigma_absolute) + c(measurement_sigma_relative) * regulator_expression_true[measurement_times],
+                                              a = 0)
 
   return(list(
     true = list (
@@ -208,40 +237,25 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, num_knots, m
       degradation = degradation,
       measurement_sigma_relative_param = array(measurement_sigma_relative,1),
       measurement_sigma_absolute_param = array(measurement_sigma_absolute,1)
-    ), observed = list(
-      num_time = num_time,
-      num_measurements = length(measurement_times),
-      num_targets = num_targets,
-      regulator_measured = if (regulator_measured) { 1 } else { 0 },
+    ), observed =
 
-      coeffs_prior_given = 0, #No coeffs prior. Sadly have to give at least size 1
-      coeffs_prior_mean = array(0.0,1),
-      coeffs_prior_cov = array(1, c(1,1)),
-
-      measurement_times = measurement_times,
-
-      num_spline_basis = num_coeff,
-      spline_basis = t(spline_basis),
-
-      expression = expression_observed,
-      regulation_signs = regulator_signs,
-      regulator_expression = if (regulator_measured) { regulator_expression_observed } else { numeric(0) },
-      measurement_sigma_given = 0,
-      measurement_sigma_absolute_prior_mean = array(0,1),
-      measurement_sigma_relative_prior_mean = array(0,1),
-      measurement_sigma_absolute_prior_sigma = array(measurement_sigma_absolute_prior_sigma,1),
-      measurement_sigma_relative_prior_sigma = array(measurement_sigma_relative_prior_sigma,1),
-      measurement_sigma_absolute_data = numeric(0),
-      measurement_sigma_relative_data = numeric(0),
-      intercept_prior_sigma = if (regulator_measured) { array(intercept_prior_sigma, 1) } else {numeric(0)},
-      initial_condition_prior_sigma = initial_condition_prior_sigma,
-      asymptotic_normalized_state_prior_sigma = asymptotic_normalized_state_prior_sigma,
-      degradation_prior_mean = degradation_prior_mean,
-      degradation_prior_sigma = degradation_prior_sigma,
-      mean_regulatory_input_prior_sigma = mean_regulatory_input_prior_sigma,
-      sd_regulatory_input_prior_sigma = sd_regulatory_input_prior_sigma,
-      scale = scale
-    )
+      regulation_model_params(
+        measurement_times = measurement_times,
+        regulator_expression = regulator_expression_observed,
+        target_expression = t(expression_observed),
+        measurement_sigma = measurement_sigma,
+        spline_params = spline_params(spline_basis, scale),
+        params_prior = params_prior(
+          initial_condition_prior_sigma = initial_condition_prior_sigma,
+          asymptotic_normalized_state_prior_sigma = asymptotic_normalized_state_prior_sigma,
+          degradation_prior_mean = degradation_prior_mean,
+          degradation_prior_sigma = degradation_prior_sigma,
+          mean_regulatory_input_prior_sigma = mean_regulatory_input_prior_sigma,
+          sd_regulatory_input_prior_sigma = sd_regulatory_input_prior_sigma,
+          intercept_prior_sigma = if (regulator_measured) { intercept_prior_sigma } else { NULL }
+        ),
+        regulation_signs = matrix(regulation_signs, 1, num_targets)
+      )
   ))
 }
 
