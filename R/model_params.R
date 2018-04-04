@@ -67,7 +67,7 @@ coeffs_prior_given <- function(coeffs_prior_mean, coeffs_prior_cov) {
 }
 
 coeffs_prior_from_fit <- function(fit, covariance_scale = 0.5) {
-  samples_coeffs <- rstan::extract(fit_source,"coeffs")$coeffs
+  samples_coeffs <- rstan::extract(fit,"coeffs")$coeffs
   num_regulators <- dim(samples_coeffs)[3]
   num_spline_basis <- dim(samples_coeffs)[2]
 

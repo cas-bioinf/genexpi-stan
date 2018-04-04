@@ -83,11 +83,13 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, measurement_
     spline_degree = 3
     spline_basis <- bs(1:num_time, df = num_df, degree = spline_degree)
 
-    num_coeff <- dim(spline_basis)[2] - 1
-    if(any(spline_basis[,num_coeff + 1] != 0)) {
-      stop("Broken assumption of zero column in bs output")
+    num_coeff <- dim(spline_basis)[2]
+    if(all(spline_basis[,num_coeff] == 0)) {
+      num_coeff <- num_coeff - 1
+      spline_basis = spline_basis[,1:num_coeff]
     }
-    spline_basis = spline_basis[,1:num_coeff]
+  } else {
+    num_coeff <- dim(spline_basis)[2]
   }
 
   scale <- 5
@@ -127,10 +129,12 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, measurement_
     if(!is.null(measurement_sigma_relative)) {
       stop("Both sigma have to be null")
     }
+    sigma_given <- FALSE
     measurement_sigma_absolute <- abs(rnorm(1,0, measurement_sigma_absolute_prior_sigma))
     measurement_sigma_relative <- abs(rnorm(1,0, measurement_sigma_relative_prior_sigma))
     measurement_sigma <- measurement_sigma_prior(0, measurement_sigma_absolute_prior_sigma, 0, measurement_sigma_relative_prior_sigma)
   } else {
+    sigma_given <- TRUE
     measurement_sigma <- measurement_sigma_given(sigma_absolute = measurement_sigma_absolute, sigma_relative = measurement_sigma_relative)
   }
 
@@ -235,8 +239,8 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, measurement_
       expression = expression_true,
       intercept = intercept,
       degradation = degradation,
-      measurement_sigma_relative_param = array(measurement_sigma_relative,1),
-      measurement_sigma_absolute_param = array(measurement_sigma_absolute,1)
+      sigma_relative_param = if(sigma_given) { array(measurement_sigma_relative,1) } else { numeric(0) },
+      sigma_absolute_param = if(sigma_given) { array(measurement_sigma_absolute,1) } else { numeric(0) }
     ), observed =
 
       regulation_model_params(

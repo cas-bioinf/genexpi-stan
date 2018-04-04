@@ -48,6 +48,9 @@ rm(temp)
 # Genes in the regulon according to http://subtiwiki.uni-goettingen.de/wiki/index.php/SigB_regulon as of 2017-02-09
 sigBRegulonNames = c("aag", "aldY", "bmr", "bmrR", "bmrU", "bofC", "cdd", "chaA", "clpC", "clpP", "corA", "csbA", "csbB", "csbC", "csbD", "csbX", "ctc", "ctsR", "cypC", "disA", "dps", "era", "gabD", "gsiB", "gspA", "gtaB", "guaD", "hpf", "iolW", "ispD", "ispF", "katE", "katX", "mcsA", "mcsB", "mgsR", "mhqO", "mhqP", "nadE", "nhaX", "ohrB", "opuE", "phoP", "phoR", "plsC", "radA", "rnr", "rpmEB", "rsbRD", "rsbV", "rsbW", "rsbX",  "sodA", "spo0E", "spoVC", "spx", "trxA", "yaaH", "yaaI", "yacL", "ybyB", "ycbP", "ycdF", "ycdG", "yceC", "yceD", "yceE", "yceF", "yceG", "yceH", "ydaD", "ydaE", "ydaF", "ydaG", "ydaJ", "ydaK", "ydaL", "ydaM", "ydaN", "ydaP", "ydaS", "ydaT", "ydbD", "ydeC", "ydhK", "yerD", "yfhD", "yfhE", "yfhF", "yfhK", "yfhL", "yfhM", "yfkD", "yfkH", "yfkI", "yfkJ", "yfkM", "yfkS", "yfkT", "yflA", "yflH", "yflT", "ygxB", "yhcM", "yhdF", "yhdN", "yhxD", "yitT", "yjbC", "yjgB", "yjgC", "yjgD", "yjzE", "ykgA", "ykgB", "ykuT", "ykzI", "ylxP", "ymzB", "yoaA", "yocB", "yocK", "yoxB", "yoxC", "ypuB", "ypuC", "ypuD", "yqhB", "yqhP", "yqhQ", "yqjL", "yraA", "ysdB", "ysnF", "ytaB", "ytkL", "ytxG", "ytxH", "ytxJ", "yugU", "yuzA", "yvaK", "yvgN", "yvgO", "yvrE", "ywiE", "ywjC", "ywlB", "ywmE", "ywmF", "ywsB", "ywtG", "ywzA", "yxaB", "yxbG", "yxiS", "yxjI", "yxjJ", "yxkO", "yxnA", "yxzF", "yycD", "yczO", "ydaC", "yebE", "yebG", "yflD", "yflB", "yisP", "ipi", "yjlB", "ykzN", "spo0E", "yktC", "ykzC", "rbfA", "ytkC", "ytiB", "menC", "menE", "yuzH", "yvbG", "yvzE", "ywsA", "ywjA", "yydC", "yyzG", "yyzH", "yybO")
 
+#Taken from Genexpi evaluation via 
+#rownames(gse6865_raw)[variousSplinesResult[[4]]$result$trueResults$tested]
+sigBRegulonInteresting <- c("clpP","csbB","csbD","csbX","ctc","ctsR","dps","gsiB","gspA","gtaB","guaD","katE","katX","mcsA","nadE","nhaX","rsbV","rsbW","rsbX","sodA","spo0E","spoVC","ybyB","ycdF","ycdG","yceD","ydaD","ydaE","ydaG","ydaP","ydaS","ydbD","ydhK","yfhD","yfhK","yfkJ","yflT","yhdN","yhxD","yjbC","yjgC","yjgD","ykgA","ykgB","ylxP","yocB","yoxC","ysnF","ytxG","ytxH","ytxJ","yvrE","ywjC","ywsB","ywzA")
 
 ```
 ```{r}
@@ -106,7 +109,7 @@ data_source <- regulation_model_params(
   regulation_signs = matrix(1, 1, length(training_targets))
 )
 
-fit_source <- sampling(multiple_targets_model, data = data_source, control = control)
+fit_source <- fit_multiple_targets(data = data_source, model = multiple_targets_model)
 
 fitted_regulator_plot(fit_source, data_source)
 
@@ -116,11 +119,11 @@ for(t in 1:length(training_targets)) {
 ```
 
 ```{r}
-candidate_genes <- setdiff(sigBRegulonNames, c("sigB",training_targets))
+candidate_genes <- setdiff(sigBRegulonInteresting, c("sigB",training_targets))
 candidate_genes <- candidate_genes[ candidate_genes %in% rownames(gse6865_raw)]
 
 #Subsampling - just for early testing
-candidate_genes <- candidate_genes[sample(1:length(candidate_genes), 10)]
+#candidate_genes <- candidate_genes[sample(1:length(candidate_genes), 10)]
 
 data_genes <- list()
 for(t in 1:length(candidate_genes)) {
@@ -135,12 +138,10 @@ for(t in 1:length(candidate_genes)) {
   )
 }
 
-sampling_multi(multiple_targets_model, data_genes, "sigB_eval", control = control)
+results_orig <-  fit_multiple_targets_multi(model = multiple_targets_model, data = data_genes, output.dir = "sigB_eval")
 
-```
 
-```{r}
-num_trials <- 10
+num_trials <- 50
 
 sigBRandomScale <- 7
 sigBRandomLength <- 20
@@ -148,26 +149,27 @@ sigBRandomLength <- 20
 training_fits <- list()
 training_data <- list()
 random_results <- list()
+random_genes_data <- list()
 for(trial in 1:num_trials) { 
   #I use time divided by two
   regulator_profile <- generate_random_profile(seq(0, max(gse6865_raw_time), by = 2), sigBRandomScale, sigBRandomLength)
-  
+
   training_data[[trial]] <- simulate_multiple_targets_spline(
-    num_targets = length(training_targets), 
-    num_time = max(measurement_times), 
-    spline_basis = spline_basis, 
-    measurement_times = measurement_times, 
-    measurement_sigma_absolute = measurement_sigma$sigma_absolute_data, 
+    num_targets = length(training_targets),
+    num_time = max(measurement_times),
+    spline_basis = spline_basis,
+    measurement_times = measurement_times,
+    measurement_sigma_absolute = measurement_sigma$sigma_absolute_data,
     measurement_sigma_relative = measurement_sigma$sigma_relative_data,
     regulator_profile = regulator_profile,
     regulation_signs = 1
     )
 
-  training_fits[[trial]] <- sampling(multiple_targets_model, data = training_data[[trial]]$observed, control = control)
+  training_fits[[trial]] <- fit_multiple_targets(model = multiple_targets_model, data = training_data[[trial]]$observed)
   
-  data_genes <- list()
+  random_genes_data[[trial]] <- list()
   for(t in 1:length(candidate_genes)) {
-    data_genes[[t]] <- regulation_model_params(
+    random_genes_data[[trial]][[t]] <- regulation_model_params(
       measurement_times = measurement_times,
       target_expression = expression_data[candidate_genes[t],],
       coeffs_prior = coeffs_prior_from_fit(training_fits[[trial]]),
@@ -178,9 +180,49 @@ for(trial in 1:num_trials) {
     )
   }
   
-  random_results[[trial]] <- sampling_multi(multiple_targets_model, data_genes,file.path("sigB_eval",paste0("random_",trial)), control = control)
-  
+  random_results[[trial]] <- fit_multiple_targets_multi( model = multiple_targets_model, data = random_genes_data[[trial]], output.dir = file.path("sigB_eval",paste0("random_",trial)))
+ 
+  save.image("genexpi_comparison.RData") 
 }
 
 ```
+
+```{r}
+for(gene_id in 1:length(candidate_genes)) {
+  fitted_target_plot(sampling_multi_read_fit(results_orig, gene_id), data_genes[[gene_id]], name = candidate_genes[gene_id]) %>% print()
+}
+```
+
+
+```{r}
+for(trial in 1:num_trials) {
+  fitted_regulator_plot(training_fits[[trial]], training_data[[trial]]$observed) %>% print()
+  target_to_show <- sample(1:training_data[[trial]]$observed$num_targets, 1)
+  fitted_target_plot(training_fits[[trial]], training_data[[trial]]$observed, target_to_show) %>% print()
+  genes_to_show <- sample(1:length(candidate_genes), 2)
+  for(gene in genes_to_show) {
+    fitted_target_plot(sampling_multi_read_fit(random_results[[trial]], gene), random_genes_data[[trial]][[gene]], name = candidate_genes[gene] ) %>% print()
+  }
+}
+```
+```{r}
+
+```
+
+```{r}
+waic_orig <- get_waic_multiple_targets_multi(results_orig)
+waic_random <- list()
+for(i in 1:num_trials) {
+  waic_random[[i]] <- get_waic_multiple_targets_multi(random_results[[i]])
+}
+save.image("genexpi_comparison.RData") 
+```
+
+
+```{r}
+cutpoint <- quantile(waic_orig, 0.8)
+sapply(waic_random, FUN = function(x) {mean(x < cutpoint)}) %>% mean()
+```
+
+
 

@@ -29,37 +29,17 @@ data.frame(time = 1:data$observed$num_time, regulator = data$true$regulator_expr
 ```
 
 ```{r}
-data <- simulate_multiple_targets_spline(5,31,5,seq(1,31,by = 3), 0.1, 0.2, regulator_measured = TRUE, integrate_ode45 = FALSE)
+data <- simulate_multiple_targets_spline(5,31,seq(1,31,by = 3), num_df = 5, measurement_sigma_absolute = 0.1, measurement_sigma_relative = 0.2, regulator_measured = TRUE, integrate_ode45 = FALSE)
 
 fit <- sampling(multiple_targets_model, data = data$observed, control = list(adapt_delta = 0.95))
-evaluation_summary(rstan::extract(fit, c("coeffs","initial_condition","sensitivity","degradation", "intercept","w","b","measurement_sigma_relative_param","measurement_sigma_absolute_param")), data$true, printParamsResults = TRUE)
+evaluation_summary(rstan::extract(fit, c("coeffs","initial_condition","sensitivity","degradation", "intercept","w","b","sigma_relative_param","sigma_absolute_param")), data$true, printParamsResults = TRUE)
  summary(fit)$summary[,c("n_eff","Rhat")] %>% as.data.frame() %>% summarise(min_n_eff = min(n_eff),max_Rhat = max(Rhat))
 
-num_samples <- 100
-main_geom <- geom_line(alpha = 0.2)
-samples_to_show <-  sample(1:4000, num_samples)
+fitted_regulator_plot(fit, data$observed)
 
-
-samples_regulator_expression <- rstan::extract(fit,"predicted_regulator_expression")$predicted_regulator_expression[samples_to_show,]
-regulator_plot <- ggmatplot(1:data$observed$num_time, t(samples_regulator_expression), main_geom = main_geom) +
-  geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$regulator_expression), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + ggtitle("Regulator")
-
-if(data$observed$regulator_measured != 0) {
-  regulator_plot <- regulator_plot + geom_point(data = data.frame(x = data$observed$measurement_times,  y = data$observed$regulator_expression), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) 
-}
-regulator_plot
-
-
-samples_regulator <- rstan::extract(fit,"regulator_profile")$regulator_profile[samples_to_show,]
-ggmatplot(1:data$observed$num_time, t(samples_regulator), main_geom = main_geom) +
-  geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$regulator_profile), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + ggtitle("Regulator raw")
-
-
-samples_expression <- rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,,,drop=FALSE]
 for(t in 1:data$observed$num_targets) { 
-  print(ggmatplot(1:data$observed$num_time, t(samples_expression[,t,]), main_geom = main_geom) +
-    geom_line(data = data.frame(x = 1:data$observed$num_time,  y = data$true$expression[t,]), aes(x=x, y=y), inherit.aes = FALSE, color = "black") + 
-    geom_point(data = data.frame(x = data$observed$measurement_times,  y = data$observed$expression[t,]), aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) + ggtitle(paste0("Target ",t)))
+  fitted_target_plot(fit, data$observed, target = t) %>% print()
+
 }
 
 
