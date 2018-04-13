@@ -3,6 +3,7 @@ title: "ODE model of gene regulation"
 output: 
   html_notebook:
       fig_caption: TRUE
+      code_folding: hide
 ---
 
 ```{r setup}
@@ -36,11 +37,11 @@ Show the data, some expression profiles.
 In all of the following, $x_i$ is the true (unknown) expression of a target gene,$y_j$ the true protein concentration of a regulator,$\rho_i$ the regulatory input, all three are functions of time while the rest are constants. The regulatory input is a linear combination of expression of regulators:
 
 $$
-\rho_i = \sum{w_{i,j}y_j} + b_i
+\rho_i = \sum_j{w_{i,j}y_j} + b_i
 $$
 Then $x_i$ is driven by the following ordinary differential equation (ODE):
 $$
-\frac{\mathrm{d}x_i}{\mathrm{d}t} = a_i F(\rho_i) - d_i x_i
+\frac{\mathrm{d}x_i}{\mathrm{d}t} = s_i F(\rho_i) - d_i x_i
 $$
 
 $$
@@ -49,7 +50,7 @@ $$
 
 where $F$ is the regulatory response function, here the logistic sigmoid.
 
-Our goal is, to use Stan to infere the parameters of this model ($a_i,w_{i,j},b_i, d_i$), given the observed expression of the target genes ($x_i$) and regulators ($y_i$) over time.
+Our goal is, to use Stan to infere the parameters of this model ($s_i,w_{i,j},b_i, d_i$), given the observed expression of the target genes ($x_i$) and regulators ($y_i$) over time.
 
 There are two forms of expression data available with widely different noise models: [microarray](https://en.wikipedia.org/wiki/DNA_microarray) and [RNA-seq](https://en.wikipedia.org/wiki/RNA-Seq). The former produces positive continuous measurements with approximately normal error while the latter produces count data with negative-binomial distribution. The datasets we are interested in come from microarray experiments so we will focus on those, but using RNA-seq means just changing the observation model. For microarrays, the observation model can be treated as a truncated normal:
 
@@ -69,17 +70,14 @@ We however need to ensure that $y_i$ are positive. After some early setbacks wit
 
 $$
 \begin{aligned}
-
 \bar{y_i} &= B\alpha_i \\
-y_i &= s(\bar{y_i} - \min{\bar{y_i}}) + \beta_i \\
-
+y_i &= c_{scale}(\bar{y_i} - \min{\bar{y_i}}) + \beta_i \\
 \alpha_i &\sim N(0,1) \\
 \beta_i &\sim HalfNormal(0, \sigma_\beta)
-
 \end{aligned}
 $$
 
-Where $\alpha_i$ is a column vector of spline coefficients, $\beta_i$ serves as intercept. The scaling constant $s$ and $\sigma_\beta$ reflect the range of the data and are given by the user.
+Where $\alpha_i$ is a column vector of spline coefficients, $\beta_i$ serves as intercept. The scaling constant $c_{scale}$ and $\sigma_\beta$ reflect the range of the data and are given by the user.
 
 [^1]: We now believe that the initial problems were not caused by ```log1pexp``` but by other parts of the model, however, the $\min$ transform is working well and there is currently no incentive to replace it. Note that $\min{\bar{y_i}}$ is mostly a smooth function of $\alpha_i$.
 
@@ -88,7 +86,7 @@ Where $\alpha_i$ is a column vector of spline coefficients, $\beta_i$ serves as 
 It is a bit tricky to use Stan's built-in ODE solver with spline as one of the parameters driving ODE evolution as it needs the value of $y_i$ at arbitrary time points. The most straightforward way - linearly interpolating between precomputed discrete values of $y_i$ requires some hacks and breaks the solver. In principle, $\alpha_i$ could be given to the ODE solver and the spline basis computed for each timepoint the solver needs, but this seemed cumbersome. Instead we decided to follow the approach of @titsiashonkela. First we can observe that the regulation ODE is linear in $x_i$ and can be solved for $t \geq 0$:
 
 $$
-x_i(t) = \eta_i e^{-d_i t} + a_i \int_0^t F(\rho_i) e^{-d_i(t-u)} \mathrm{d}u
+x_i(t) = \eta_i e^{-d_i t} + s_i \int_0^t F(\rho_i) e^{-d_i(t-u)} \mathrm{d}u
 $$
 Where $\eta_i$ is the concentration of the target at $t=0$. We then solve the resulting integral numerically via [trapezoid rule](https://en.wikipedia.org/wiki/Trapezoidal_rule)[^2]. Assuming unit timestep, $x_i$ can be computed in a single for loop:
 
@@ -96,7 +94,7 @@ $$
 \begin{aligned}
 \chi_i(0) &= -\frac{1}{2} F(\rho_i(0)) \\
 \chi_i(t + 1) &= (\chi_i(t) + F(\rho_i(t)))d_i \\
-x_i(t) &= \eta_i e^{-d_i t} + a_i(\chi_i(t) + \frac{1}{2}F(\rho_i(t)))
+x_i(t) &= \eta_i e^{-d_i t} + s_i(\chi_i(t) + \frac{1}{2}F(\rho_i(t)))
 \end{aligned}
 $$
 
@@ -104,7 +102,7 @@ $$
 
 # Identifiability
 
-The model, as given above is biologically relevant, but has multiple identifiability issues, all of which can be demonstrated with just a single regulator and a single target. The first one arises with $w$ and $b$ if all values of $\rho$ fall on the tail of the sigmoid, which is approximately linear. In this case, the walue of $F(\rho)$ becomes insensitive to linear transformations of $w$ and $b$:
+The model, as given above is biologically relevant, but has multiple identifiability issues, all of which can be demonstrated with just a single regulator and a single target, so we will drop parameter indicies for the rest of this section. The first non-identifiability arises with $w$ and $b$ if all values of $\rho$ fall on the tail of the sigmoid, which is approximately linear. In this case, the walue of $F(\rho)$ becomes insensitive to linear transformations of $w$ and $b$:
 
 ```{r}
 time <- seq(0,2,length.out = 100)
@@ -127,9 +125,9 @@ data.frame(time = time, regulator = regulator, target1 = target1, target2 = targ
   gather("profile","expression", -time) %>%
   ggplot(aes(x = time, y = expression, color = profile)) + 
   geom_line() + 
-  scale_color_hue(labels = c("regulator", params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non-identifiability due to w and b","All targets have a = 1, d = 0.5")
+  scale_color_hue(labels = c("regulator", params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non-identifiability due to w and b","All targets have s = 1, d = 0.5")
 ```
-Linear transformations of $a$ and $d$ together may also have very minor effect on the resulting expression. While the resulting expression profiles are more different than in the previous case, those differences are still very small compared to the noise in the data:
+Transformations of $s$ and $d$ together may also have very minor effect on the resulting expression. While the resulting expression profiles are more different than in the previous case, those differences are still very small compared to the noise observed in real data:
 ```{r, fig.cap="The red dots represent measurements that have approximately equal likelihood for each of the shown true target profiles, assuming $\\sigma \\simeq 0.5$"}
 time <- seq(0,2,length.out = 100)
 regulator <- sin(time * 4) + 1
@@ -144,7 +142,7 @@ params3 <- c(degradation = 100, bias = -1, sensitivity = 200, weight = 1, basal_
 target3 <-  ode( y = c(x = 1), times = time, func = target_ODE, parms = params3, method = "ode45")[,"x"];
 
 params_to_legend <- function(params) {
-  paste0("a = ", params["sensitivity"], ", d = ", params["degradation"])
+  paste0("s = ", params["sensitivity"], ", d = ", params["degradation"])
 }
 
 measured_data = data.frame(profile = "measured", time = seq(0,2,length.out = 9), 
@@ -155,9 +153,9 @@ data.frame(time = time, regulator = regulator, target1 = target1, target2 = targ
   gather("profile","expression", -time) %>%
   ggplot(aes(x = time, y = expression, color = profile)) + geom_line() + 
   geom_point(data = measured_data, color = "#ba1b1d", size = 3) +
-  scale_color_hue(labels = c("regulator",params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non identifiability due to a and d","All targets have w = 1, b = -1")
+  scale_color_hue(labels = c("regulator",params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non identifiability due to s and d","All targets have w = 1, b = -1")
 ```
-There is also a non-identifiability when $w = 0$ as $a$ and $b$ become redundant. Even worse, some of the solutions with $w = 0$ might not be distinguishable form solutions with $|w| \gg 0$. This might also induce non-identifiability in the initial condition $\eta$ as it is much less constrained by data. Once again the expression profiles are not identical, but are close enough that given the amount of noise, non-negligible posterior mass can be found for all of them:
+There is also a non-identifiability when $w = 0$ as $s$ and $b$ become redundant. Even worse, some of the solutions with $w = 0$ might not be distinguishable form solutions with $|w| \gg 0$. This might also induce non-identifiability in the initial condition $\eta$ as it is much less constrained by data. Once again the expression profiles are not identical, but are close enough that given the amount of noise, non-negligible posterior mass can be found for all of them:
 
 ```{r, fig.cap="The red dots represent measurements that have approximately equal likelihood for each of the shown true target profiles, assuming $\\sigma \\simeq 0.5$"}
 time <- seq(0,2,length.out = 100)
@@ -174,7 +172,7 @@ target3 <-  ode( y = c(x = 2.5), times = time, func = target_ODE, parms = params
 
 
 params_to_legend <- function(params) {
-  paste0("a = ", params["sensitivity"],", w = ", params["weight"], ", b = ", params["bias"], ", d = ", params["degradation"])
+  paste0("s = ", params["sensitivity"],", w = ", params["weight"], ", b = ", params["bias"], ", d = ", params["degradation"])
 }
 
 measured_data = data.frame(profile = "measured", time = seq(0,2,length.out = 9), 
@@ -187,7 +185,7 @@ data.frame(time = time, regulator = regulator, target1 = target1, target2 = targ
   geom_point(data = measured_data, color = "#ba1b1d", size = 3) +
   scale_color_hue(labels = c("regulator",params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non identifiability between w=0 and w > 0")
 ```
-Last but not least, it is also possible to get distinct solution with different size of $w$:
+Last but not least, it is also possible to get distinct solution with different sign of $w$:
 
 ```{r, fig.cap="The red dots represent measurements that have approximately equal likelihood for each of the shown true target profiles, assuming $\\sigma \\simeq 0.5$"}
 time <- seq(0,2,length.out = 100)
@@ -201,7 +199,7 @@ target2 <-  ode( y = c(x = 0), times = time, func = target_ODE, parms = params2,
 
 
 params_to_legend <- function(params) {
-  paste0("a = ", params["sensitivity"],", w = ", params["weight"], ", b = ", params["bias"], ", d = ", params["degradation"])
+  paste0("s = ", params["sensitivity"],", w = ", params["weight"], ", b = ", params["bias"], ", d = ", params["degradation"])
 }
 
 measured_data = data.frame(profile = "measured", time = seq(0,2,length.out = 9), 
@@ -212,29 +210,73 @@ data.frame(time = time, regulator = regulator, target1 = target1, target2 = targ
   gather("profile","expression", -time) %>%
   ggplot(aes(x = time, y = expression, color = profile)) + geom_line() + 
   geom_point(data = measured_data, color = "#ba1b1d", size = 3) +
-  scale_color_hue(labels = c("regulator",params_to_legend(params1), params_to_legend(params2))) + ggtitle("Non identifiability between w=0 and w > 0")
+  scale_color_hue(labels = c("regulator",params_to_legend(params1), params_to_legend(params2))) + ggtitle("Non identifiability between w < 0 and w > 0")
 ```
 
+There are probably many more non-identified scenarios, especially when multiple targets targets are involved, but the above are of the type we have actually encountered with real data.
 
-The model is not well identified:
+## Reparametrization
 
-- approximately linear regulation (tails of sigmoid)
-- constant synthesis solution & regulated solution (different starting points)
-- positive weight solution vs. negative weight
-- hitting one of two peaks
+First we realized that when there is a good fit with $w < 0$ and a similarly good one with $w > 0$ are, there is nothing we can do to make the model identifiable, so we decided to make the user specify the expected sign for all $w_{i,j}$ as data. This is not a big hindrance as this type of regulation model is mostly employed to test direct regulations by transcription factors which are expected to always have $w > 0$.
 
-Some identification problems may be resolved by reparametrization
+Some of the non-identifiabilities are a result of the fact, that some of the roles the parameters play in the model are partially shared by muliple parameters. To get rid of those complex dependencies, we introduced several reparametrizations. The only parameter we kept directly is the degradation parameter $d_i$, which also has the nice property that it does not depend on the scale of the expression data (only on the length of the timestep).
 
-Some by filtering constant synthesis first
+Instead of $s_i,b_i$ and $w_{i,j}$, we introduce $\mu^{\rho}_i$, the mean regulatory input, $\sigma^{\rho}_i$, the sd of the regulatory input and $a_i$ the asymptotic normalized state. All of those parameters are also decoupled from the actual values of the expression data. In the case of a single regulator $y$, the new parameters are connected with the original parameters as follows:
 
-How to handle the regulator(s)?
+$$
+\begin{align}
+w_i &= \mathrm{sgn}(w_i) \frac{\sigma^{\rho}_i}{Var(\rho_i)} \\
+b_i &= \mu^{\rho}_i - w_i E(\rho_i) \\
+s_i &= \frac{a_i d_i \max\tilde{x_i} }{ E(F(\rho_i)) }
+\end{align}
+$$
+The interpretion of $a_i$ is that if $\rho_i \gg 0$ and $t \rightarrow \infty$ then $\rightarrow$. Also note that using $\max\tilde{x_i}$ means the model is not, strictly speaking generative, as we cannot generate $\tilde{x_i}$ before we generate $s_i$, but this has shown to not be a problem in practice.
 
-- Splines
-- GP - had problems fitting
+When there are multiple regulators, their relative weights are described by a simplex parameter $\gamma_i$ and $w_i$ is redistributed among them so that:
+$$
+\begin{align}
+w_{i,j} &= \gamma_{i,j}w_i \\
+\sum_j \gamma_{i,j} &= 1, \gamma_{i,j} > 0 \\
+\end{align}
+$$
+This not only helped identify the posterior but it is also much easier to specify priors for those parameters!
 
-forcing positivity with log1pexp makes for weird random profiles, rather move closest point to zero. min is a continuous (and mostly smooth) function of the spline coeffs
+We ended up with:
+$$
+\begin{align}
+\mu^{\rho}_i &\sim N(0,\tau_{\rho,\mu}) &\\
+\sigma^{\rho}_i &\sim N(0,\tau_{\rho,\sigma})  &| \sigma^{\rho}_i > 0 \\
+a_i &\sim  N(1,\tau_{a})  &| a_i > 0 \\
+log(d_i) &\sim N(\nu_d,\tau_d) & 
+\end{align}
+$$
+Where all the hyperparameters are given by user, but sensible defaults can be given as the hyperparameters are decoupled from the scale of the data. Since the sigmoid $F$ is mostly saturated outside $[-5,5]$, we use $\tau_{\rho,\mu} = \tau_{\rho,\sigma} = 5$. Further we expect $a_i$ should lie mostly in $[0,2]$ (e.g. if given more time the gene will unlikely raise to more than twice the maximum observed), giving $\tau_a = \frac{1}{2}$ and finally we expect degradation to be non-negligible but less than 1 (e.g. all mRNA degrading in a single unit of time), giving $\nu_d = -2$ and $\tau_d = 1$.
 
-In the following, we treat $\sigma_{abs}$ and $\sigma_{rel} as given. While they can be fit in principle with the model, the resulting $\sigma_{rel}$ values tended to be unrealistically high.
+## The constant synthesis model
+
+To get rid of the non-identifiabilities connected with $w = 0$, we first try to fit a simpler *constant synthesis* model to each target separately, this model is given by:
+
+$$
+\frac{\mathrm{d}x_i}{\mathrm{d}t} = s'_i - d'_i x_i
+$$
+As in the general model, the constant synthesis model is not always well identified with this representation and we also introduce $a'_i$ as the asymptotic normalized state.
+
+$$
+s'_i = a'_i d'_i \max\tilde{x_i}
+$$
+This also lets us use the same priors for $a'_i$ and $d'_i$ as for $a_i$ and $d_i$ respectively.
+
+If the target is "reasonably well" fit with the constant synthesis model, it is not considered for the full model, because it could then be fit by any regulator, simply be setting $w = 0$. The quality of the model fit is assessed with WAIC, see discussion below for further details.
+
+# Estimating regulator expression from known targets
+
+## Transferring the learned expression to other fits
+
+# Fitting new targets
+
+# Assesing model fit
+
+In the following, we treat $\sigma_{abs}$ and $\sigma_{rel} as given. While they can be fit in principle with the model, the resulting $\sigma_{rel}$ values tended to be unrealistically high and most fits unexpectedly poor as a consequence.
 
 How high is the level of technical noise in microarray data? (https://biologydirect.biomedcentral.com/articles/10.1186/1745-6150-2-9) 
 suggests that technical variation is constant (and with sigma around 0.1). But we also have biological variability / stochasticity, that is proportional.
