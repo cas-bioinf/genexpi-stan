@@ -1,13 +1,220 @@
 ---
 title: "ODE model of gene regulation"
-output: html_notebook
+output: 
+  html_notebook:
+      fig_caption: TRUE
 ---
+
+```{r setup}
+devtools::load_all()
+library(cowplot)
+library(tidyverse)
+```
+
+
+# Abstract
+
+
+# Biological Background
+In a very simplified form the [central dogma](https://en.wikipedia.org/wiki/Central_dogma_of_molecular_biology) of molecular biology may be paraphrased as follows: The DNA contains all of the instructions needed to run a cell and can be divided into coding and non-coding regions. The coding regions of DNA can be transcribed to form messenger RNA (mRNA) molecule containing a mirror-copy of the coding region. The messenger RNA is then translated to create protein. Proteins then perform most of the actual functions of the cells, including control of transcription and translation. This process is regulated at all stages and involves many feedback loops: most importantly, the rate of transcription of a gene is controlled by the abundance of regulatory proteins binding to specific sequences of the DNA near the coding region. The rate of translation and degradation of mRNA can also be regulated separately by other proteins and the rate of degradation of proteins themselves is also affected by other proteins. There are many exceptions where the above simplification does not hold, but the vast majority of cellular life can be described in these terms. 
+
+Understanding what are the regulations taking place is thus an important step in understanding how cells work. However, our ability to observe what happens in the cell is very limited: The only commonly available method that can capture information about all genes in a single experiment is measuring the concentration of mRNA which is in turn strongly related to expression (how many mRNAs are transcribed from the gene in a unit of time). Gathering expression data remains relatively expensive and except for the most studied organisms, at most several dozen whole genome expression experiments have been published.
+
+It has been shown that mRNA and protein concentration are mostly correlated, however this relationship is imperfect (Maier et al. 2009; Gygi et al. 1999). Nevertheless, expression data is the best proxy for protein concentration available at the whole genome level and expression data are thus widely used to infer interactions that control transcription of genes.
+
+# Scope
+In this work we assume time series of expression.
 
 Introduction. Titsias & Honkela
 
-Problems with ODE solver over interpolated data
+We tried to directly rephrase the Titsias & Honkela model in Stan and we ran into large computational difficulties, including several non-identifiabilities, that we were not able to resolve without modifying the model. The model presented here resulted from resolving those issues and a slight simplification of the model
 
-The integration trick
+Show the data, some expression profiles.
+
+# Basics of The Model
+
+In all of the following, $x_i$ is the true (unknown) expression of a target gene,$y_j$ the true protein concentration of a regulator,$\rho_i$ the regulatory input, all three are functions of time while the rest are constants. The regulatory input is a linear combination of expression of regulators:
+
+$$
+\rho_i = \sum{w_{i,j}y_j} + b_i
+$$
+Then $x_i$ is driven by the following ordinary differential equation (ODE):
+$$
+\frac{\mathrm{d}x_i}{\mathrm{d}t} = a_i F(\rho_i) - d_i x_i
+$$
+
+$$
+F(\rho_i) = \frac{1}{1 + e^{-\rho_i}}
+$$
+
+where $F$ is the regulatory response function, here the logistic sigmoid.
+
+Our goal is, to use Stan to infere the parameters of this model ($a_i,w_{i,j},b_i, d_i$), given the observed expression of the target genes ($x_i$) and regulators ($y_i$) over time.
+
+There are two forms of expression data available with widely different noise models: [microarray](https://en.wikipedia.org/wiki/DNA_microarray) and [RNA-seq](https://en.wikipedia.org/wiki/RNA-Seq). The former produces positive continuous measurements with approximately normal error while the latter produces count data with negative-binomial distribution. The datasets we are interested in come from microarray experiments so we will focus on those, but using RNA-seq means just changing the observation model. For microarrays, the observation model can be treated as a truncated normal:
+
+$$
+\tilde{x_i}(t) \sim N(x_i(t), \sigma_{abs} + x_i(t)\sigma_{rel})  \mathop{|} \tilde{x_i}(t) > 0
+$$
+
+The two error terms represent the fixed absolute error ($\sigma_{abs}$) which is the result of technical noise in the microarray platform and the relative error ($\sigma_{rel}$) wich represents the uncaptured biological variation which tend to be proportional to the expresssion of the genes. 
+
+For the regulator(s) there are two possible regimes: a) the expression of the regulators is observed and the protein concentration is assumed to be indentical to the true expression or b) the $y$ is estimated only through its influence on $x$. In case a), the exact same error model applies to regulators.
+
+# Modelling Regulator Expression
+
+To solve the regulation ODE numerically, we need to have $y_i$ available at much finer intervals than the available measurements (1-2 minute intervals have proven sufficient). Initially, we considered Gaussian Processes (as @titsiashonkela), but those introduced computational issues and we switched to B-splines which have less theoretical appeal, but introduce fewer parameters and were easier to fit.
+
+We however need to ensure that $y_i$ are positive. After some early setbacks with the ```log1pexp`` transform ($x^+ = ln(1+e^x)$), we settled to simply subtract the minimum of the spline from all points[^1], i.e. given the spline basis $B$ we get:
+
+$$
+\begin{aligned}
+
+\bar{y_i} &= B\alpha_i \\
+y_i &= s(\bar{y_i} - \min{\bar{y_i}}) + \beta_i \\
+
+\alpha_i &\sim N(0,1) \\
+\beta_i &\sim HalfNormal(0, \sigma_\beta)
+
+\end{aligned}
+$$
+
+Where $\alpha_i$ is a column vector of spline coefficients, $\beta_i$ serves as intercept. The scaling constant $s$ and $\sigma_\beta$ reflect the range of the data and are given by the user.
+
+[^1]: We now believe that the initial problems were not caused by ```log1pexp``` but by other parts of the model, however, the $\min$ transform is working well and there is currently no incentive to replace it. Note that $\min{\bar{y_i}}$ is mostly a smooth function of $\alpha_i$.
+
+# Solving the ODE
+
+It is a bit tricky to use Stan's built-in ODE solver with spline as one of the parameters driving ODE evolution as it needs the value of $y_i$ at arbitrary time points. The most straightforward way - linearly interpolating between precomputed discrete values of $y_i$ requires some hacks and breaks the solver. In principle, $\alpha_i$ could be given to the ODE solver and the spline basis computed for each timepoint the solver needs, but this seemed cumbersome. Instead we decided to follow the approach of @titsiashonkela. First we can observe that the regulation ODE is linear in $x_i$ and can be solved for $t \geq 0$:
+
+$$
+x_i(t) = \eta_i e^{-d_i t} + a_i \int_0^t F(\rho_i) e^{-d_i(t-u)} \mathrm{d}u
+$$
+Where $\eta_i$ is the concentration of the target at $t=0$. We then solve the resulting integral numerically via [trapezoid rule](https://en.wikipedia.org/wiki/Trapezoidal_rule)[^2]. Assuming unit timestep, $x_i$ can be computed in a single for loop:
+
+$$
+\begin{aligned}
+\chi_i(0) &= -\frac{1}{2} F(\rho_i(0)) \\
+\chi_i(t + 1) &= (\chi_i(t) + F(\rho_i(t)))d_i \\
+x_i(t) &= \eta_i e^{-d_i t} + a_i(\chi_i(t) + \frac{1}{2}F(\rho_i(t)))
+\end{aligned}
+$$
+
+[^2]: Trapezoid rule agrees well with the results of solving the ODE with RK45, while the simpler midpoint rule has significant bias even when the time steps are small.
+
+# Identifiability
+
+The model, as given above is biologically relevant, but has multiple identifiability issues, all of which can be demonstrated with just a single regulator and a single target. The first one arises with $w$ and $b$ if all values of $\rho$ fall on the tail of the sigmoid, which is approximately linear. In this case, the walue of $F(\rho)$ becomes insensitive to linear transformations of $w$ and $b$:
+
+```{r}
+time <- seq(0,2,length.out = 100)
+regulator <- sin(time * 4) + 1
+
+params1 <- c(degradation = 0.5, bias = -3, sensitivity = 1, weight = 5, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+target1 <-  ode( y = c(x = 0), times = time, func = target_ODE, parms = params1, method = "ode45")[,"x"];
+
+params2 <- c(degradation = 0.5, bias = -6, sensitivity = 1, weight = 10, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+target2 <-  ode( y = c(x = 0), times = time, func = target_ODE, parms = params2, method = "ode45")[,"x"];
+
+params3 <- c(degradation = 0.5, bias = -30, sensitivity = 1, weight = 50, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+target3 <-  ode( y = c(x = 0), times = time, func = target_ODE, parms = params3, method = "ode45")[,"x"];
+
+params_to_legend <- function(params) {
+  paste0("w = ", params["weight"], ", b = ", params["bias"])
+}
+
+data.frame(time = time, regulator = regulator, target1 = target1, target2 = target2, target3 = target3) %>%
+  gather("profile","expression", -time) %>%
+  ggplot(aes(x = time, y = expression, color = profile)) + 
+  geom_line() + 
+  scale_color_hue(labels = c("regulator", params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non-identifiability due to w and b","All targets have a = 1, d = 0.5")
+```
+Linear transformations of $a$ and $d$ together may also have very minor effect on the resulting expression. While the resulting expression profiles are more different than in the previous case, those differences are still very small compared to the noise in the data:
+```{r, fig.cap="The red dots represent measurements that have approximately equal likelihood for each of the shown true target profiles, assuming $\\sigma \\simeq 0.5$"}
+time <- seq(0,2,length.out = 100)
+regulator <- sin(time * 4) + 1
+
+params1 <- c(degradation = 5, bias = -1, sensitivity = 10, weight = 1, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+target1 <-  ode( y = c(x = 1), times = time, func = target_ODE, parms = params1, method = "ode45")[,"x"];
+
+params2 <- c(degradation = 10, bias = -1, sensitivity = 20, weight = 1, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+target2 <-  ode( y = c(x = 1), times = time, func = target_ODE, parms = params2, method = "ode45")[,"x"];
+
+params3 <- c(degradation = 100, bias = -1, sensitivity = 200, weight = 1, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+target3 <-  ode( y = c(x = 1), times = time, func = target_ODE, parms = params3, method = "ode45")[,"x"];
+
+params_to_legend <- function(params) {
+  paste0("a = ", params["sensitivity"], ", d = ", params["degradation"])
+}
+
+measured_data = data.frame(profile = "measured", time = seq(0,2,length.out = 9), 
+                           expression = c(1,1.7,1.4,0.8, 0.7,0.3,0.7,1.4,1.5))
+
+
+data.frame(time = time, regulator = regulator, target1 = target1, target2 = target2, target3 = target3) %>%
+  gather("profile","expression", -time) %>%
+  ggplot(aes(x = time, y = expression, color = profile)) + geom_line() + 
+  geom_point(data = measured_data, color = "#ba1b1d", size = 3) +
+  scale_color_hue(labels = c("regulator",params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non identifiability due to a and d","All targets have w = 1, b = -1")
+```
+There is also a non-identifiability when $w = 0$ as $a$ and $b$ become redundant. Even worse, some of the solutions with $w = 0$ might not be distinguishable form solutions with $|w| \gg 0$. This might also induce non-identifiability in the initial condition $\eta$ as it is much less constrained by data. Once again the expression profiles are not identical, but are close enough that given the amount of noise, non-negligible posterior mass can be found for all of them:
+
+```{r, fig.cap="The red dots represent measurements that have approximately equal likelihood for each of the shown true target profiles, assuming $\\sigma \\simeq 0.5$"}
+time <- seq(0,2,length.out = 100)
+regulator <- sin(time * 4) + 1
+
+params1 <- c(degradation = 3, bias = -1, sensitivity = 3, weight = 5, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+target1 <-  ode( y = c(x = 1.5), times = time, func = target_ODE, parms = params1, method = "ode45")[,"x"];
+
+params2 <- c(degradation = 3.4, bias = 0, sensitivity = 6, weight = 0, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+target2 <-  ode( y = c(x = 1.6), times = time, func = target_ODE, parms = params2, method = "ode45")[,"x"];
+
+params3 <- c(degradation = 10, bias = 0, sensitivity = 16, weight = 0, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+target3 <-  ode( y = c(x = 2.5), times = time, func = target_ODE, parms = params3, method = "ode45")[,"x"];
+
+
+params_to_legend <- function(params) {
+  paste0("a = ", params["sensitivity"],", w = ", params["weight"], ", b = ", params["bias"], ", d = ", params["degradation"])
+}
+
+measured_data = data.frame(profile = "measured", time = seq(0,2,length.out = 9), 
+                           expression = c(1.8,0.9,1,0.66, 1.11,0.6,0.7,0.96,1.03))
+
+
+data.frame(time = time, regulator = regulator, target1 = target1, target2 = target2, target3 = target3) %>%
+  gather("profile","expression", -time) %>%
+  ggplot(aes(x = time, y = expression, color = profile)) + geom_line() + 
+  geom_point(data = measured_data, color = "#ba1b1d", size = 3) +
+  scale_color_hue(labels = c("regulator",params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non identifiability between w=0 and w > 0")
+```
+Last but not least, it is also possible to get distinct solution with different size of $w$:
+
+```{r, fig.cap="The red dots represent measurements that have approximately equal likelihood for each of the shown true target profiles, assuming $\\sigma \\simeq 0.5$"}
+time <- seq(0,2,length.out = 100)
+regulator <- (sin(time * 1.5) ^ 2) * 2
+
+params1 <- c(degradation = 2, bias = -1, sensitivity = 3, weight = 5, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+target1 <-  ode( y = c(x = 0), times = time, func = target_ODE, parms = params1, method = "ode45")[,"x"];
+
+params2 <- c(degradation = 1.4, bias = 10, sensitivity = 2.5, weight = -5, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+target2 <-  ode( y = c(x = 0), times = time, func = target_ODE, parms = params2, method = "ode45")[,"x"];
+
+
+params_to_legend <- function(params) {
+  paste0("a = ", params["sensitivity"],", w = ", params["weight"], ", b = ", params["bias"], ", d = ", params["degradation"])
+}
+
+measured_data = data.frame(profile = "measured", time = seq(0,2,length.out = 9), 
+                           expression = c(0.2,0.35,0.61,1.03, 1.11,1.42,1.07,1.76,1.23))
+
+
+data.frame(time = time, regulator = regulator, target1 = target1, target2 = target2) %>%
+  gather("profile","expression", -time) %>%
+  ggplot(aes(x = time, y = expression, color = profile)) + geom_line() + 
+  geom_point(data = measured_data, color = "#ba1b1d", size = 3) +
+  scale_color_hue(labels = c("regulator",params_to_legend(params1), params_to_legend(params2))) + ggtitle("Non identifiability between w=0 and w > 0")
+```
+
 
 The model is not well identified:
 
@@ -20,13 +227,18 @@ Some identification problems may be resolved by reparametrization
 
 Some by filtering constant synthesis first
 
-
 How to handle the regulator(s)?
 
 - Splines
 - GP - had problems fitting
 
 forcing positivity with log1pexp makes for weird random profiles, rather move closest point to zero. min is a continuous (and mostly smooth) function of the spline coeffs
+
+In the following, we treat $\sigma_{abs}$ and $\sigma_{rel} as given. While they can be fit in principle with the model, the resulting $\sigma_{rel}$ values tended to be unrealistically high.
+
+How high is the level of technical noise in microarray data? (https://biologydirect.biomedcentral.com/articles/10.1186/1745-6150-2-9) 
+suggests that technical variation is constant (and with sigma around 0.1). But we also have biological variability / stochasticity, that is proportional.
+
 
 First refine regulator by working with known targets.
 
@@ -35,5 +247,3 @@ Reducing actual posterior to multivariate normal and using to fit other genes.
 WAIC to quickly assess fit quality
 
 
-How high is the level of technical noise in microarray data? (https://biologydirect.biomedcentral.com/articles/10.1186/1745-6150-2-9) 
-suggests that technical variation is constant (and with sigma around 0.1). But we also have biological variability / stochasticity, that is proportional.

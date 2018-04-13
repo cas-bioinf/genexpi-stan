@@ -62,3 +62,18 @@ mcmc_parcoord(as.array(fit, pars = c("predicted_regulator_expression")), np = nu
 
 ```
 
+# TODO check alternatives to ensuring positivity
+
+```{r}
+points <- 1:100
+df <- 7
+basis <- bs(points, df = df, intercept = TRUE)
+n_samples <- 10
+rand_coeff <- array(rnorm(df*n_samples), c(df, n_samples))
+raw_points <- basis %*% rand_coeff
+min_add <- array(apply(raw_points, 2, min), c(n_samples, length(points))) %>% t
+min_plot <- ggmatplot(points, raw_points - min_add, main_geom = geom_line(alpha = 0.5)) + ggtitle("Min = 0")
+exp_plot <- ggmatplot(points, log1p(exp(raw_points)), main_geom = geom_line(alpha = 0.5)) + ggtitle("log(1 + exp)") 
+plot_grid(min_plot, exp_plot, ncol = 1)
+
+```
