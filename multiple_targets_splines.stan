@@ -76,7 +76,7 @@ transformed data {
   }
 
   for(t in 1:num_targets) {
-    max_target_expression[t] = max(expression[t]);
+    max_target_expression[t] = max(expression[,t]);
   }
 
   {
@@ -158,7 +158,7 @@ transformed parameters {
       {
         real sd_regulator_profile = sd(regulator_profile[,r]);
         mean_regulator_profile[r] = mean(regulator_profile[,r]);
-        w[,r] = regulation_signs_real[r,] .* (sd_regulatory_input ./ sd_regulator_profile) .* to_vector(relative_weights[,r]);
+        w[,r] = regulation_signs_real[r,] .* (sd_regulatory_input ./ sd_regulator_profile) .* to_vector(relative_weights[,r]); //TODO how do relative_weights interact with regulation_signs? If there are opposing signs, isn't this an issue?
       }
       b_centered = mean_regulatory_input - w * mean_regulator_profile;
     }
@@ -213,9 +213,7 @@ model {
     }
 
     initial_condition ~ normal(0, initial_condition_prior_sigma);
-    for(r in 1:num_regulators) {
-      coeffs[,r] ~ normal(0,1); //coeffs are rescaled by the scale parameter
-    }
+    to_vector(coeffs) ~ normal(0,1); //coeffs are rescaled by the scale parameter
     intercept_raw ~ normal(0, 1);
     asymptotic_normalized_state ~ normal(1, asymptotic_normalized_state_prior_sigma);
 
