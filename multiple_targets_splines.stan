@@ -158,7 +158,7 @@ transformed parameters {
       {
         real sd_regulator_profile = sd(regulator_profile[,r]);
         mean_regulator_profile[r] = mean(regulator_profile[,r]);
-        w[,r] = regulation_signs_real[r,] .* (sd_regulatory_input ./ sd_regulator_profile) .* to_vector(relative_weights[,r]); //TODO how do relative_weights interact with regulation_signs? If there are opposing signs, isn't this an issue?
+        w[,r] = regulation_signs_real[r,] .* (sd_regulatory_input ./ sd_regulator_profile) .* to_vector(relative_weights[,r]); //Note: proper handling would be to take into account the covariance of the regulatory profiles, but this has issues of its own (especially in that there might be multiple solutions)
       }
       b_centered = mean_regulatory_input - w * mean_regulator_profile;
     }
