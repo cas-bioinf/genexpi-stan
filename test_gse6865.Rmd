@@ -178,7 +178,7 @@ data_source <- regulation_model_params(
   #     sigma_absolute_prior_sigma = 0.1,
   #     sigma_relative_prior_sigma = 0.2
   # ),
-  measurement_sigma = measurement_sigma_given(0.2,0.05),
+  measurement_sigma = measurement_sigma_given(0.1,0.1),
   spline_params = sigB_spline_params,
   params_prior = sigB_params_prior,
   regulation_signs = matrix(1, 1, length(targets))
@@ -217,10 +217,8 @@ for(target in 1:length(targets)) {
 ```{r}
 pairs(fit_source, pars = "coeffs")
 samples_coeffs <- rstan::extract(fit_source,"coeffs")$coeffs[,,1]
-uniPlot(samples_coeffs, type ="qqplot")
-uniPlot(samples_coeffs, type = "histogram")
-mardiaTest(samples_coeffs, qqplot = TRUE)
-mvOutlier(samples_coeffs, qqplot = TRUE, method = "adj.quan")
+mvn(samples_coeffs, mvnTest = "mardia", multivariatePlot = "qq")
+
 ```
 We see there are some deviations from normality. In particular it seems the posterior has heavier tails than normal. Let's see what happens when we try to fit multivariete normal anyway. 
 
@@ -262,7 +260,7 @@ targets <- sample(rownames(expression_data[])[rowMeans(expression_data) > 1])
 #targets <- c("yqxD","yfkJ","pyrB","purT")
 #targets <- c("yqxD")
 #targets <- c("jag","kinC","kinE","lepA")
-targets <- c("codV", "yhdL", "kinE","purT")
+#targets <- c("codV", "yhdL", "kinE","purT")
 #tagG, rplD, ptsG, ahpC, glmS, yurV
 
 data_target <- list()

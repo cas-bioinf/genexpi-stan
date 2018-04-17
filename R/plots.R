@@ -3,7 +3,7 @@ default_expression_plot_main_geom <- geom_line(alpha = 0.2)
 
 
 get_total_samples <- function(fit) {
-  length(rstan::extract(fit,"sigma_relative")$sigma_relative)
+  sapply(fit@stan_args, FUN = function(x) {x$iter - x$warmup}) %>% sum()
 }
 
 fitted_regulator_plot <- function(fit, data, regulator = 1, name = NULL,
@@ -79,10 +79,60 @@ fitted_target_observed_plot <- function(fit, data, target = 1, name = NULL,
 
 
   ggmatplot(data$measurement_times, t(samples_expression[,,1]),
-            main_geom = main_geom, x_title = "time", y_title = "expression") +
+            main_geom = main_geom, x_title = "time", y_title = "observed expression") +
     geom_point(
       data = data.frame(x = data$measurement_times,  y = data$expression[,target]),
       aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) +
     ggtitle(paste0("Expression - ", target_name))
+
+}
+
+fitted_csynth_plot <- function(fit, data, name = NULL,
+                               num_samples = default_expression_plot_num_samples,
+                               main_geom = default_expression_plot_main_geom) {
+
+  samples_to_show <-  sample(1:get_total_samples(fit), num_samples)
+
+  samples_expression <-
+    rstan::extract(fit,"predicted_expression")$predicted_expression[samples_to_show,,drop=FALSE]
+
+  if(!is.null(name)) {
+    target_name <- name
+  } else {
+    target_name <- "N/A"
+  }
+
+
+  ggmatplot(data$measurement_times, t(samples_expression),
+            main_geom = main_geom, x_title = "time", y_title = "expression") +
+    geom_point(
+      data = data.frame(x = data$measurement_times,  y = data$expression),
+      aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) +
+    ggtitle(paste0("Constant synthesis - ", target_name))
+
+}
+
+fitted_csynth_observed_plot <- function(fit, data, target = 1, name = NULL,
+                                        num_samples = default_expression_plot_num_samples,
+                                        main_geom = default_expression_plot_main_geom) {
+
+  samples_to_show <-  sample(1:get_total_samples(fit), num_samples)
+
+  samples_expression <-
+    rstan::extract(fit,"expression_replicates")$expression_replicates[samples_to_show,,drop=FALSE]
+
+  if(!is.null(name)) {
+    target_name <- name
+  } else {
+    target_name <- "N/A"
+  }
+
+
+  ggmatplot(data$measurement_times, t(samples_expression),
+            main_geom = main_geom, x_title = "time", y_title = "observed expression") +
+    geom_point(
+      data = data.frame(x = data$measurement_times,  y = data$expression),
+      aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) +
+    ggtitle(paste0("Constant synthesis obs. - ", target_name))
 
 }

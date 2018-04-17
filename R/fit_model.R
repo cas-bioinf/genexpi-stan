@@ -32,17 +32,25 @@ get_waic_multiple_targets <- function(fit, target = 1) {
   samples_log_lik <- rstan::extract(fit, "log_likelihood")$log_likelihood
   lik_data <- samples_log_lik[,,target]
 
-  waic(lik_data)$waic
+  waic(lik_data)$estimates["waic","Estimate"]
 }
 
-get_waic_multiple_targets_multi <- function(results, target = 1, cores = parallel::detectCores()) {
+get_waic_csynth <- function(fit) {
+  samples_log_lik <- rstan::extract(fit, "log_likelihood")$log_likelihood
+  lik_data <- samples_log_lik
+
+  waic(lik_data)$estimates["waic","Estimate"]
+}
+
+
+get_waic_multi <- function(results, waic_fun, cores = parallel::detectCores()) {
   cl <- parallel::makeCluster(cores, useXDR = FALSE)
   on.exit(parallel::stopCluster(cl))
 
 
-  waic_fun <- function(id) {
+  extract_waic <- function(id) {
     fit <- sampling_multi_read_fit(results, id)
-    get_waic_multiple_targets(fit, target)
+    waic_fun(fit)
   }
 
   dependencies <- c("rstan","Rcpp","genexpiStan","loo")
@@ -57,7 +65,25 @@ get_waic_multiple_targets_multi <- function(results, target = 1, cores = paralle
   parallel::clusterEvalQ(cl, expr =
                            suppressPackageStartupMessages(require(loo, quietly = TRUE)))
 
-  parallel::clusterExport(cl, varlist = c("results", "target"), envir = environment())
+  parallel::clusterExport(cl, varlist = c("results"), envir = environment())
 
-  parallel::parSapplyLB(cl, X = 1:length(results), FUN = waic_fun)
+  parallel::parSapplyLB(cl, X = 1:length(results), FUN = extract_waic)
+}
+
+get_waic_multiple_targets_multi <- function(results, target = 1, cores = parallel::detectCores()) {
+
+  waic_fun <- function(fit) {
+    get_waic_multiple_targets(fit, target)
+  }
+
+  get_waic_multi(results, waic_fun, cores)
+}
+
+get_waic_csynth_multi <- function(results, cores = parallel::detectCores()) {
+
+  waic_fun <- function(fit) {
+    get_waic_csynth(fit)
+  }
+
+  get_waic_multi(results, waic_fun, cores)
 }
