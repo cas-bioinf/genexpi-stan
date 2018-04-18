@@ -1,8 +1,9 @@
 sigB_eval
+local_data
 out
 Figs
-stancon_cache
-stancon_files
+*_cache
+*_files
 .Rproj.user
 *.rds
 .Rhistory
