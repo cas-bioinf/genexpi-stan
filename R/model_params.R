@@ -108,7 +108,7 @@ force_to_expression_matrix <- function(x) {
   }
 }
 
-regulation_model_params <- function(
+regulated_model_params <- function(
   measurement_times,
   measurement_sigma,
   spline_params,

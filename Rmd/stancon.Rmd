@@ -8,8 +8,8 @@ author: |
   | Martin Modrák
   | Laboratory of Bioinformatics
   | Institute of Microbiology of the Czech Academy of Sciences
-  | martin.modrak@biomed.cas.cz, www.martinmodrak.cz
-date: "`r format(Sys.time(), '%d %B %Y')`"
+  | martin.modrak@biomed.cas.cz, https://www.martinmodrak.cz
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
 bibliography: stancon.bib
 ---
 
@@ -38,7 +38,7 @@ In determining regulatory interactions within cells, models based on ordinary di
 This notebook shows first usable version of the model, but there are still several outstanding issues which we highlight.
 
 # Biological Background
-In a very simplified form the [central dogma](https://en.wikipedia.org/wiki/Central_dogma_of_molecular_biology) of molecular biology may be paraphrased as follows: The DNA contains all of the instructions needed to run a cell and can be divided into coding and non-coding regions. The coding regions of DNA can be transcribed to form messenger RNA (mRNA) molecule containing a mirror-copy of the coding region. The messenger RNA is then translated to create protein. Proteins then perform most of the actual functions of the cells, including control of transcription and translation. This process is regulated at all stages and involves many feedback loops: most importantly, the rate of transcription of a gene is controlled by the abundance of regulatory proteins binding to specific sequences of the DNA near the coding region. The rate of translation and degradation of mRNA can also be regulated separately by other proteins and the rate of degradation of proteins themselves is also affected by other proteins. There are many exceptions where the above simplification does not hold, but the vast majority of cellular life can be described in these terms. 
+In a very simplified form the [central dogma](https://en.wikipedia.org/wiki/Central_dogma_of_molecular_biology) of molecular biology may be paraphrased as follows: The DNA contains all of the instructions needed to run a cell and can be divided into coding and non-coding regions. The coding regions of DNA can be *transcribed* to form messenger RNA (mRNA) molecules containing a mirror-copy of the coding region. The messenger RNA is then *translated* to create protein. Proteins perform most of the actual functions of the cells, including control of transcription and translation. This process is regulated at all stages and involves many feedback loops: most importantly, the rate of transcription of a gene is controlled by the abundance of regulatory proteins binding to specific sequences of the DNA near the coding region. The rate of translation and degradation of mRNA can also be regulated separately by other proteins and the rate of degradation of proteins themselves is also affected by other proteins. There are many exceptions where the above simplification does not hold, but the vast majority of cellular life can be described in these terms. 
 
 Understanding what are the regulations taking place is thus an important step in understanding how cells work. However, our ability to observe what happens in the cell is very limited: The only commonly available method that can capture information about all genes in a single experiment is measuring the concentration of mRNA which is in turn strongly related to expression (how many mRNAs are transcribed from the gene in a unit of time). Gathering expression data remains relatively expensive and except for the most studied organisms, at most several dozen whole genome expression experiments have been published.
 
@@ -46,13 +46,13 @@ It has been shown that mRNA and protein concentration are mostly correlated, how
 
 # Scope
 
-The model presented in this notebook aims at modelling and identifying transcriptional regulations from time series data of gene expression. While the model aims to be more general, our particular the interest is on determining for which genes does a known [*sigma factor*](https://en.wikipedia.org/wiki/Sigma_factor) initiate transcription.
+The model presented in this notebook aims at modelling and identifying transcriptional regulations from time series data of gene expression. While the model aims to be more general, our particular interest is on determining for which genes does a known [*sigma factor*](https://en.wikipedia.org/wiki/Sigma_factor) initiate transcription.
 
-The present work was motivated by reading [@TitsiasHonkela12] who developed a fully Bayesian model of transcriptional regulation, extending a classical regulation model [@Vohradsky2001] with Gaussian Processes. Titsias et al. used a custom Monte Carlo sampler and to our knowledge, there is no other fully Bayesian treatment of the model available. Initially, we tried to directly rephrase the Titsias et al. model in Stan, but we ran into large computational difficulties, including several non-identifiabilities, that we were not able to resolve without modifying the model. In this notebook, we present a model that resulted from resolving those issues and a slight simplification of the original model, as our use case didn't need to model protein dynamics separately. We further show how we determine model fit and use a simple auxiliary expression model to filter out genes whose expression does not identify the parameters of the full model.
+The present work was motivated by reading [@TitsiasHonkela12] who developed a fully Bayesian model of transcriptional regulation, extending a classical regulation model [@Vohradsky2001] with Gaussian Processes. Titsias et al. used a custom Metropolis-within-Gibbs sampler and to our knowledge, there is no other fully Bayesian treatment of the model available. Initially, we tried to directly rephrase the Titsias et al. model in Stan, but we ran into large computational difficulties, including several non-identifiabilities, that we were not able to resolve without modifying the model. In this notebook, we present a model that resulted from resolving those issues and a slight simplification of the original model, as our use case didn't need to model protein dynamics separately. We further show how we determine model fit and use a simple auxiliary expression model to filter out genes whose expression does not identify the parameters of the full model.
 
 # Data
 
-The data we will work with in this notebook is a time series of 14 microarray measurements of expression of 4008 genes in the bacterium *Bacillus subtilis* during germination (transition from dormant spores to normal metabolism) [@Keijser2007], depositioned in the Gene Expression Omnibus under GSE6865. (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE6865).
+The data we will work with in this notebook is a time series of 14 microarray measurements of expression of 4008 genes in the bacterium *Bacillus subtilis* during germination (transition from dormant spores to normal metabolism), depositioned in the Gene Expression Omnibus under GSE6865 [@Keijser2007,  https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE6865].
 
 ```{r}
 #Try to download the data, if it was not already present on the computer
@@ -93,7 +93,7 @@ rm(data_dir)
 rm(data_file)
 ```
 
-Below is a sample of the expression profiles of 20 random genes, let us notice that most genes have almost zero expression.
+Below is a sample of the expression profiles of 20 random genes, notice that most genes have almost zero expression.
 
 ```{r}
 set.seed(2345277)
@@ -104,7 +104,7 @@ ggmatplot(gse6865_raw_time, t(gse6865_raw[genes_to_show,]), main_geom = geom_lin
 
 # Basics of The Model
 
-In all of the following, $x_i$ is the true (unknown) expression of a target gene,$y_j$ the true protein concentration of a regulator and $\rho_i$ the regulatory input. Both $x_i$, $y_j$ and $\rho_i$ are functions of time while all the other parameters are constants. The regulatory input is a linear combination of protein concentrations of the regulators:
+In all of the following, $x_i$ is the true (unknown) expression of a target gene, $y_j$ the true protein concentration of a regulator and $\rho_i$ the regulatory input for the target gene. Both $x_i$, $y_j$ and $\rho_i$ are functions of time while all other parameters are constants. The regulatory input is a linear combination of protein concentrations of the regulators:
 
 $$
 \rho_i = \sum_j{w_{i,j}y_j} + b_i
@@ -120,7 +120,7 @@ $$
 
 where $F$ is the regulatory response function, in our case the logistic sigmoid.
 
-Our goal is, to use Stan to infere the parameters of this model ($s_i,w_{i,j},b_i, d_i$), given the observed expression of the target genes ($x_i$) and regulators ($y_i$) over time.
+Our goal is to use Stan to infer the parameters of this model ($s_i,w_{i,j},b_i, d_i$), given the observed expression of the target genes and regulators over time. The model assumes constant degradation ($d_i$) over time which is unrealistic, but necessary as most datasets do not contain enough information to identify varying degradation.
 
 There are two forms of expression data available with widely different noise models: [microarray](https://en.wikipedia.org/wiki/DNA_microarray) and [RNA-seq](https://en.wikipedia.org/wiki/RNA-Seq). The former produces positive continuous measurements with approximately normal error while the latter produces count data with negative-binomial distribution. The datasets we are interested in come from microarray experiments so we will focus on those, but using RNA-seq means just changing the observation model. For microarrays, the observation model can be treated as a truncated normal:
 
@@ -128,15 +128,15 @@ $$
 \tilde{x_i}(t) \sim N(x_i(t), \sigma_{abs} + x_i(t)\sigma_{rel})  \mathop{|} \tilde{x_i}(t) > 0
 $$
 
-The two error terms represent the fixed absolute error ($\sigma_{abs}$) which is the result of technical noise in the microarray platform and the relative error ($\sigma_{rel}$) wich represents the uncaptured biological variation which tend to be proportional to the expresssion of the genes. 
+The two error terms represent the fixed absolute error ($\sigma_{abs}$) which is the result of technical noise in the microarray platform which is constant [@Klebanov2007] and the relative error ($\sigma_{rel}$) wich represents the uncaptured biological variation which tend to be proportional to the expresssion of the genes. 
 
-For the regulator(s) there are two possible regimes: a) the expression of the regulators is observed and the protein concentration is assumed to be indentical to the true expression or b) the $y$ is estimated only through its influence on $x$. In case a), the exact same error model applies to regulators.
+For the regulator(s) there are two possible regimes: a) the expression of the regulators is observed and the protein concentration is assumed to be identical to the true expression or b) the $y$ is estimated only through its influence on $x$. In case a), the exact same error model applies to regulators.
 
 
 In the following, we treat both $\sigma_{abs}$ and $\sigma_{rel}$ as given. The model can treat the error terms as parameters, but with the dataset we work with, the resulting $\sigma_{rel}$ values tended to be unrealistically high and most fits unexpectedly poor as a consequence. We are yet to investigate why this is the case.
 
-[@Klebanov2007]
-suggests that technical variation is constant and expects $\sigma_{abs} = 0.1$. Based on our previous experience with similar models, we expect the biological variation to be around 20% of the expression, suggesting $\sigma_{rel} = 0.1$.
+
+Based on our previous experience with similar models, we expect $\sigma_{abs} = 0.1$ and the biological variation to be around 20% of the expression, suggesting $\sigma_{rel} = 0.1$.
 
 
 
@@ -207,9 +207,9 @@ data.frame(time = time, regulator = regulator, target1 = target1, target2 = targ
   scale_color_hue(labels = c("regulator", params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non-identifiability due to w and b","All targets have s = 1, d = 0.5")
 ```
 
-Transformations of $s$ and $d$ together may also have very minor effect on the resulting expression. While the resulting expression profiles are more different than in the previous case, those differences are still very small compared to the noise observed in real data:
+Transformations of $s$ and $d$ together may also have very minor effect on the resulting expression. While the resulting expression profiles are more different than in the previous case, those differences are still very small compared to the noise observed in real data. In the following figures, the red dots represent measurements that have approximately equal likelihood for each of the shown true target profiles.
 
-```{r, fig.cap="The red dots represent measurements that have approximately equal likelihood for each of the shown true target profiles, assuming $\\sigma \\simeq 0.5$"}
+```{r}
 time <- seq(0,2,length.out = 100)
 regulator <- sin(time * 4) + 1
 
@@ -236,9 +236,10 @@ data.frame(time = time, regulator = regulator, target1 = target1, target2 = targ
   geom_point(data = measured_data, color = "#ba1b1d", size = 3) +
   scale_color_hue(labels = c("regulator",params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non identifiability due to s and d","All targets have w = 1, b = -1")
 ```
+
 There is also a non-identifiability when $w = 0$ as $s$ and $b$ become redundant. Even worse, some of the solutions with $w = 0$ might not be distinguishable form solutions with $|w| \gg 0$. This might also induce non-identifiability in the initial condition $\eta$ as it is much less constrained by data. Once again the expression profiles are not identical, but are close enough that given the amount of noise, non-negligible posterior mass can be found for all of them:
 
-```{r, fig.cap="The red dots represent measurements that have approximately equal likelihood for each of the shown true target profiles, assuming $\\sigma \\simeq 0.5$"}
+```{r}
 time <- seq(0,2,length.out = 100)
 regulator <- sin(time * 4) + 1
 
@@ -266,9 +267,10 @@ data.frame(time = time, regulator = regulator, target1 = target1, target2 = targ
   geom_point(data = measured_data, color = "#ba1b1d", size = 3) +
   scale_color_hue(labels = c("regulator",params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non identifiability between w=0 and w > 0")
 ```
+
 Last but not least, it is also possible to get similar solutions with different sign of $w$:
 
-```{r, fig.cap="The red dots represent measurements that have approximately equal likelihood for each of the shown true target profiles, assuming $\\sigma \\simeq 0.5$"}
+```{r}
 time <- seq(0,2,length.out = 100)
 regulator <- (sin(time * 1.5) ^ 2) * 2
 
@@ -294,13 +296,13 @@ data.frame(time = time, regulator = regulator, target1 = target1, target2 = targ
   scale_color_hue(labels = c("regulator",params_to_legend(params1), params_to_legend(params2))) + ggtitle("Non identifiability between w < 0 and w > 0")
 ```
 
-There are probably many more non-identified scenarios, especially when multiple targets targets are involved, but the above are of the type we have actually encountered with real data.
+There are probably many more non-identified scenarios, especially when multiple targets are involved, but the above are of the type we have actually encountered with real data.
 
 ## Reparametrization
 
 First we realized that when there is a good fit with $w < 0$ and a similarly good one with $w > 0$, there is nothing we can do to make the model identifiable, so we decided to make the user specify the signs of regulatory interactions $I_{i,j} = sgn(w_{i,j})$  as data. This is not a big hindrance as this type of regulation model is mostly employed to test direct regulations by sigma factors which are expected to always have $w > 0$. If the sign of $w$ is important and there is only one regulator, it is possible to fit each target separately with different values of $I_{1,1}$. The only truly problematic case is when fitting a model with multiple regulators and unknown $I$, but since two regulators already often overfit on most practical datasets this is of little practical concern.
 
-Some of the non-identifiabilities are a result of the fact, that the roles the parameters play in the model are partially shared by muliple parameters. To get rid of those complex dependencies, we introduced several reparametrizations. The only parameter we kept directly is the degradation parameter $d_i$, which also has the nice property that it does not depend on the scale of the expression data (only on the length of the timestep).
+Some of the non-identifiabilities arise because certain simple aspects of the resulting expression (e. g. magnitude) are influenced by multiple parameters. To get rid of those complex dependencies, we introduced several reparametrizations. The only parameter we kept directly is the degradation parameter $d_i$, which also has the nice property that it does not depend on the scale of the expression data (only on the length of the timestep).
 
 Instead of $s_i,b_i$ and $w_{i,j}$, we introduce $\mu^{\rho}_i$, the mean regulatory input, $\sigma^{\rho}_i$, the sd of the regulatory input, $\gamma_i$ a simplex of relative regulator weights and $a_i$ the asymptotic normalized state. All of those parameters are also decoupled from the actual values of the expression data. The new parameters are connected with the original parameters as follows:
 
@@ -312,7 +314,7 @@ s_i &= \frac{a_i d_i \max\tilde{x_i} }{ E(F(\rho_i)) } \\
 \sum_j \gamma_{i,j} &= 1 , & \gamma_{i,j} > 0 \\
 \end{align}
 $$
-Where $E$ and $\mathrm{sd}$ correspond to the sample mean and standard deviation. The formula for $w_{i,j}$ assumes independence among the regulators which does not hold, but handling the covariance structure correctly would be difficult and could lead to multiple solutions. The interpretion of $a_i$ is that if the expression stays at its mean level, e.g. $F(\rho_i) \simeq E(F(\rho_i))$ and $t \rightarrow \infty$ then $x_i(t) \rightarrow a_i$. Also note that using $\max\tilde{x_i}$ to scale $s_i$ means the model is not completely generative, as we cannot generate $\tilde{x_i}$ before we generate $s_i$, but this has shown to not be a problem in practice.
+Where $E$ and $\mathrm{sd}$ correspond to the sample mean and standard deviation. The formula for $w_{i,j}$ assumes independence among the regulators which does not hold, but handling the covariance structure correctly would be difficult and could lead to multiple solutions. The interpretion of $a_i$ is that if the expression stays at its mean level, e.g. $F(\rho_i) \simeq E(F(\rho_i))$ and $t \rightarrow \infty$ then $x_i(t) \rightarrow a_i \max\tilde{x_i}$. Also note that using $\max\tilde{x_i}$ to scale $s_i$ means the model is not completely generative, as we cannot generate $\tilde{x_i}$ before we generate $s_i$, but this has shown to not be a problem in practice.
 
 The reparametrization not only helped identify the posterior but it is also much easier to specify priors for those parameters! We ended up with the following priors:
 $$
@@ -327,7 +329,7 @@ Where all the hyperparameters are given by user, but sensible defaults can be gi
 
 ## The constant synthesis model
 
-To get rid of the non-identifiabilities connected with $w = 0$, we first try to fit a simpler *constant synthesis* model to each target separately, this model is given by:
+To get rid of the non-identifiabilities connected with $w = 0$, we first try to fit a simpler *constant synthesis* model to each target separately. This model is given by:
 
 $$
 \frac{\mathrm{d}x_i}{\mathrm{d}t} = s'_i - d'_i x_i
@@ -352,7 +354,7 @@ The assumed workflow when using the model to infer novel regulations proceeds as
 5. Fit the main model to each putative target separately
 6. Compare the fit with the main model to the fit of the constant synthesis model
 
-In the following example, we will use 5 known and 4 putative targets of the *sigA* regulator. In all of the following we use cubic spline with 6 degrees of freedom, $c_{scale} = 5$ as the basis for the main model.
+In the following example, we will use 5 known and 4 putative targets of the *sigA* regulator. We use cubic spline with 6 degrees of freedom, $c_{scale} = 5$ as the basis for the main model.
 
 ```{r}
 #Globally used params for the algorithm
@@ -402,18 +404,18 @@ plot_profiles(expression_data, known_targets) + ggtitle("Known targets")
 
 ## Fit the constant synthesis model
 
-Below are posterior samples from fitting the constant synthesis model to all of the targets.
+Below are posterior samples from fitting the constant synthesis model to the putative targets.
 
 In addition to samples from posterior true expression we also show simulated replicates of the measured values, to get a better sense of the level of noise expected by the model.
 
 
 ```{r cache=TRUE, results = "hide"}
-csynth_model <- stan_model(file = here('constant_synthesis.stan'))
+csynth_model <- stan_model(file = here('stan','constant_synthesis.stan'))
 ```
 
-```{r,cache=TRUE}
+```{r csynth_model,cache=TRUE}
 
-targets <- c(putative_targets, known_targets)
+targets <- c(putative_targets)
 data_csynth <- list()
 fits_csynth <- list()
 waic_csynth <- array(-1, length(targets))
@@ -455,12 +457,12 @@ csynth_table <- tibble(target = targets, waic_csynth = waic_csynth)
 csynth_table %>% kable()
 ```
 
-Our workflow currently assumes that a human inspects the fits and specifies a WAIC threshold manually. The threshold can be relatively conservative, the only thing that needs to be avoided are non-identifiabilities due to conflict between fits with $w = 0$ and fits with $w \gg 0$. In this example, we will set threshold to 0, elminating only *kinE* from further consideration.
+Our workflow currently assumes that a human inspects the fits and specifies a WAIC threshold manually. The threshold can be relatively conservative, the only thing that needs to be avoided are non-identifiabilities due to conflict between fits with $w = 0$ and fits with $w \gg 0$. In this example, we will set threshold to 0, elminating only *kinE* from further consideration. In practice it is also important to fit the constant synthesis model to the known targets, which we omitted here for brevity (none of the known targets is fit well).
 
 
 # Estimating regulator expression from known targets
 
-The motivation for using known regulations is that the data constrain the true expression quite weakly. This is not an issue for the putative targets, but becomes problematic for the expression of the regulators. When trying to determine new regulations, only a single target at a time needs to be fit, because the model assumes that all the regulations actually take place and thus a single regulation that is not, in fact, correct may shift the parameter values (especially the spline params $\alpha$) considerably. While it would be in principle possible to marginalize over the power set of targets to get estimates of probabilities of the individual regulations, this is computationally infeasible. The downside of fitting each target separately is that the estimated expression of regulators may not be consistent across targets, possibly leading to false positives.
+A problem with the main model is that the data constrain the true expression quite weakly. This is not an issue for the putative targets, but becomes problematic for the expression of the regulators. When trying to determine new regulations, only a single target at a time needs to be fit, because the model assumes that all the regulations actually take place and thus a single regulation that is not, in fact, correct may shift the parameter values (especially the spline params $\alpha$) considerably. While it would be in principle possible to marginalize over the power set of targets to get estimates of probabilities of the individual regulations, this is computationally infeasible. The downside of fitting each target separately is that the estimated expression of regulators may not be consistent across targets, possibly leading to false positives.
 
 Similarly to [@TitsiasHonkela12], our model is able to use known regulations to reduce the uncertainty in regulator expression, hopefully elminating any gross inconsistencies between individual fits for putative targets. This is a simple side-effect of the Bayesian treatment, where after fitting the model with all the known targets at once, we can extract the posterior for $y$ and use it as input when fitting putative targets. This step is however optional and if no targets are known with high certainty, it can be skipped.
 
@@ -469,14 +471,14 @@ First, let us see the posterior samples from fitting the regulator with 0 target
 
 ```{r load_model, cache = TRUE, results = "hide"}
 #Load the model
-multiple_targets_model <- stan_model(file = here('multiple_targets_splines.stan'))
+regulated_model <- stan_model(file = here('stan','regulated.stan'))
 ```
 
 ```{r spline_only, cache = TRUE, results="hide"}
 set.seed(4127785)
 source <- "sigA"
 
-data <- regulation_model_params(
+data <- regulated_model_params(
   measurement_times = measurement_times,
   regulator_expression = expression_data[source,],
   measurement_sigma = default_measurement_sigma,
@@ -485,7 +487,7 @@ data <- regulation_model_params(
 )
 
 
-fit_regulator_spline_only <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
+fit_regulator_spline_only <- sampling(regulated_model, data = data, control = list(adapt_delta = 0.95))
 
 fitted_regulator_plot(fit_regulator_spline_only, data, name = paste0(source, " spline only"))
 ```
@@ -497,7 +499,7 @@ And this is what the posterior looks like when both regulator expression and 5 k
 set.seed(751235428)
 
 
-data <- regulation_model_params(
+data <- regulated_model_params(
   measurement_times = measurement_times,
   regulator_expression = expression_data[source,],
   target_expression = t(expression_data[known_targets,,drop = FALSE]),
@@ -508,7 +510,7 @@ data <- regulation_model_params(
 )
 
 
-fit_regulator_all_info <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
+fit_regulator_all_info <- sampling(regulated_model, data = data, control = list(adapt_delta = 0.95))
 
 fitted_regulator_plot(fit_regulator_all_info, data, name = paste0(source, " all information"))
 
@@ -576,7 +578,7 @@ fits_regulated <- list()
 waic_regulated <- array(-1, length(targets))
 coeffs_prior <- coeffs_prior_from_fit(fit_regulator_all_info, covariance_scale = 1)
 for(t in 1:length(targets)) {
-  data_regulated[[t]] <- regulation_model_params(
+  data_regulated[[t]] <- regulated_model_params(
     measurement_times = measurement_times,
     target_expression = t(expression_data[targets[t],,drop = FALSE]),
     regulation_signs = matrix(1, 1, 1),
@@ -585,8 +587,8 @@ for(t in 1:length(targets)) {
     params_prior = default_params_prior,
     coeffs_prior = coeffs_prior
   )  
-  fits_regulated[[t]] <- sampling(multiple_targets_model, data_regulated[[t]])
-  waic_regulated[t] <- get_waic_multiple_targets(fits_regulated[[t]], target = 1)
+  fits_regulated[[t]] <- sampling(regulated_model, data_regulated[[t]])
+  waic_regulated[t] <- get_waic_regulated(fits_regulated[[t]], target = 1)
 }
 ```
 
@@ -619,7 +621,7 @@ Since *purT* is likely not regulated by *sigA*, we might try a combination of mu
 regulators = c("sigA", "sigB")
 targets = "purT"
 
-data_two_reg <- regulation_model_params(
+data_two_reg <- regulated_model_params(
     measurement_times = measurement_times,
     regulator_expression = t(expression_data[regulators,,drop = FALSE]),
     target_expression = t(expression_data[targets,,drop = FALSE]),
@@ -629,7 +631,7 @@ data_two_reg <- regulation_model_params(
     params_prior = default_params_prior
   )  
 
-fit_two_reg <- fit_multiple_targets(data_two_reg, multiple_targets_model)
+fit_two_reg <- fit_regulated(data_two_reg, regulated_model)
 ```
 
 Inspecting the fit visually and comparing the WAIC in this case we see that the regulation by *sigA* and *sigB* is plausible.
@@ -638,7 +640,7 @@ Inspecting the fit visually and comparing the WAIC in this case we see that the 
 plot1 <- fitted_target_plot(fit_two_reg, data_two_reg)
 plot2 <- fitted_target_observed_plot(fit_two_reg, data_two_reg)
 plot_grid(plot1, plot2, ncol = 2)
-regulated_table %>% filter(target == "purT") %>% mutate(waic_two_reg = get_waic_multiple_targets(fit_two_reg)) 
+regulated_table %>% filter(target == "purT") %>% mutate(waic_two_reg = get_waic_regulated(fit_two_reg)) %>% kable()
 
 
 ```
@@ -648,6 +650,7 @@ regulated_table %>% filter(target == "purT") %>% mutate(waic_two_reg = get_waic_
 While the model as presented is already prepared for use to infer novel regulations, there are some issues that need to be ironed out before we can rely on it. Most notably, we are yet to perform a thorough evaluation and comparison with other tools for the same task. Initial results were actually comparable to a simpler maximum likelihood variant of the model with separate splining and parameter fitting phases [as presented in @Modrak2018]. We are currently working to understand why there is not a marked improvement, as we know that separating splining from parameter fit led to problems for the simpler version.
 
 Further workflow steps we are not happy with are the way we fit a multivariete normal distribution to the posterior of regulator expression, the arbitrary way we use WAIC to make decisions and convergence issues that sometimes arise when running the model without observed regulator expression on real data.
+There is also substantial work to be done in encapsulating the model as a package and providing a cleaner interface.
 
 We nevertheless hope that the modelling approach we took is of interest to the Stan community and can provide inspiration for other models.
 

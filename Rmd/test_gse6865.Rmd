@@ -13,6 +13,7 @@ library(tidyverse)
 library(loo)
 library(MVN)
 library(bayesplot)
+library(here)
 ```
 
 
@@ -96,9 +97,9 @@ ggplot(data.frame(x = sigma_absolute_samples), aes(x=x)) + geom_density() +
 ```
 
 
-#Multiple targets model
+#Regulated model
 ```{r}
-multiple_targets_model <- stan_model(file = 'multiple_targets_splines.stan')
+regulated_model <- stan_model(file = here('stan','regulated.stan'))
 ```
 
 #Estimate sigma with splines
@@ -106,7 +107,7 @@ multiple_targets_model <- stan_model(file = 'multiple_targets_splines.stan')
 
 sources <- c("sigA","sigB", sample(rownames(expression_data), 5))
 
-data_sigma_estimate <- regulation_model_params(
+data_sigma_estimate <- regulated_model_params(
   measurement_times = measurement_times,
   regulator_expression = t(expression_data[sources,]),
   measurement_sigma = measurement_sigma_prior(
@@ -119,7 +120,7 @@ data_sigma_estimate <- regulation_model_params(
   spline_params = sigB_spline_params
 )
 
-fit_sigma_estimate <- sampling(multiple_targets_model, data = data_sigma_estimate, control = list(adapt_delta = 0.95))
+fit_sigma_estimate <- sampling(regulated_model, data = data_sigma_estimate, control = list(adapt_delta = 0.95))
 
 summary(fit_sigma_estimate, pars = c("sigma_relative_param","sigma_absolute_param"))$summary
 
@@ -137,7 +138,7 @@ source <- "sigA"
 #source <- "sigB"
 targets <- c()
 
-data <- regulation_model_params(
+data <- regulated_model_params(
   measurement_times = measurement_times,
   regulator_expression = expression_data[source,],
   # measurement_sigma = measurement_sigma_prior(
@@ -152,7 +153,7 @@ data <- regulation_model_params(
 )
 
 
-fit <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
+fit <- sampling(regulated_model, data = data, control = list(adapt_delta = 0.95))
 print(summary(fit, pars = c("coeffs", "intercept","initial_condition","sensitivity","degradation","w","b"))$summary)
 
 fitted_regulator_plot(fit, data)
@@ -168,7 +169,7 @@ targets <- c("codY","clpQ","yqxD","yhdL", "comA","codV","comEB", "dnaG")#, "ftsA
 #targets <- c("codY","clpQ","yqxD")
 
 
-data_source <- regulation_model_params(
+data_source <- regulated_model_params(
   measurement_times = measurement_times,
   target_expression = t(expression_data[targets,]),
   regulator_expression = expression_data[source,],
@@ -184,7 +185,7 @@ data_source <- regulation_model_params(
   regulation_signs = matrix(1, 1, length(targets))
 )
 
-fit_source <- sampling(multiple_targets_model, data = data_source, control = list(adapt_delta = 0.95))
+fit_source <- sampling(regulated_model, data = data_source, control = list(adapt_delta = 0.95))
 
 #print(summary(fit_source, pars = c("sensitivity","degradation","w","b","sigma_absolute_param","sigma_relative_param"))$summary)
 
@@ -266,7 +267,7 @@ targets <- sample(rownames(expression_data[])[rowMeans(expression_data) > 1])
 data_target <- list()
 for(t in 1:length(targets)) {
 
- data_target[[t]] <- regulation_model_params(
+ data_target[[t]] <- regulated_model_params(
     measurement_times = measurement_times,
     target_expression = expression_data[targets[t],],
     #regulator_expression = expression_data[source,],
@@ -285,7 +286,7 @@ for(t in 1:length(targets)) {
  
 }
 
-results_target <- fit_multiple_targets_multi(data_target, output.dir = "out/test_target")
+results_target <- fit_regulated_multi(data_target, output.dir = "out/test_target")
 
 fits_target <- list()
    
@@ -322,7 +323,7 @@ data.frame(order = (1:length(targets))[o],gene = targets[o], waic = waic[o], loo
 
 ##Comparing to constant synthesis
 ```{r}
-csynth_model <- stan_model(file = 'constant_synthesis.stan')
+csynth_model <- stan_model(file = here('stan','constant_synthesis.stan'))
 ```
 
 ```{r}
@@ -413,7 +414,7 @@ data <- list(
   scale = 5
 )
 
-fit <- sampling(multiple_targets_model, data = data, control = list(adapt_delta = 0.95))
+fit <- sampling(regulated_model, data = data, control = list(adapt_delta = 0.95))
 print(summary(fit, pars = c("coeffs", "intercept","initial_condition","sensitivity","degradation","w","b"))$summary)
 
 num_samples <- 100

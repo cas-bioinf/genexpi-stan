@@ -13,6 +13,7 @@ library(tidyverse)
 library(loo)
 library(MVN)
 library(bayesplot)
+library(here)
 ```
 
 
@@ -54,7 +55,7 @@ sigBRegulonInteresting <- c("clpP","csbB","csbD","csbX","ctc","ctsR","dps","gsiB
 
 ```
 ```{r}
-multiple_targets_model <- stan_model(file = 'multiple_targets_splines.stan')
+regulated_model <- stan_model(file = here('stan','regulated.stan'))
 
 ```
 
@@ -99,7 +100,7 @@ source <- "sigB"
 training_targets <- c("ydaD","bmrU","bofC")
 
 
-data_source <- regulation_model_params(
+data_source <- regulated_model_params(
   measurement_times = measurement_times,
   target_expression = t(expression_data[training_targets,]),
   regulator_expression = expression_data[source,],
@@ -109,7 +110,7 @@ data_source <- regulation_model_params(
   regulation_signs = matrix(1, 1, length(training_targets))
 )
 
-fit_source <- fit_multiple_targets(data = data_source, model = multiple_targets_model)
+fit_source <- fit_regulated(data = data_source, model = regulated_model)
 
 fitted_regulator_plot(fit_source, data_source)
 
@@ -127,7 +128,7 @@ candidate_genes <- candidate_genes[ candidate_genes %in% rownames(gse6865_raw)]
 
 data_genes <- list()
 for(t in 1:length(candidate_genes)) {
-  data_genes[[t]] <- regulation_model_params(
+  data_genes[[t]] <- regulated_model_params(
     measurement_times = measurement_times,
     target_expression = expression_data[candidate_genes[t],],
     coeffs_prior = coeffs_prior_from_fit(fit_source),
@@ -138,7 +139,7 @@ for(t in 1:length(candidate_genes)) {
   )
 }
 
-results_orig <-  fit_multiple_targets_multi(model = multiple_targets_model, data = data_genes, output.dir = "sigB_eval")
+results_orig <-  fit_regulated_multi(model = regulated_model, data = data_genes, output.dir = "sigB_eval")
 
 
 num_trials <- 50
@@ -154,7 +155,7 @@ for(trial in 1:num_trials) {
   #I use time divided by two
   regulator_profile <- generate_random_profile(seq(0, max(gse6865_raw_time), by = 2), sigBRandomScale, sigBRandomLength)
 
-  training_data[[trial]] <- simulate_multiple_targets_spline(
+  training_data[[trial]] <- simulate_regulated_spline(
     num_targets = length(training_targets),
     num_time = max(measurement_times),
     spline_basis = spline_basis,
@@ -165,11 +166,11 @@ for(trial in 1:num_trials) {
     regulation_signs = 1
     )
 
-  training_fits[[trial]] <- fit_multiple_targets(model = multiple_targets_model, data = training_data[[trial]]$observed)
+  training_fits[[trial]] <- fit_regulated(model = regulated_model, data = training_data[[trial]]$observed)
   
   random_genes_data[[trial]] <- list()
   for(t in 1:length(candidate_genes)) {
-    random_genes_data[[trial]][[t]] <- regulation_model_params(
+    random_genes_data[[trial]][[t]] <- regulated_model_params(
       measurement_times = measurement_times,
       target_expression = expression_data[candidate_genes[t],],
       coeffs_prior = coeffs_prior_from_fit(training_fits[[trial]]),
@@ -180,7 +181,7 @@ for(trial in 1:num_trials) {
     )
   }
   
-  random_results[[trial]] <- fit_multiple_targets_multi( model = multiple_targets_model, data = random_genes_data[[trial]], output.dir = file.path("sigB_eval",paste0("random_",trial)))
+  random_results[[trial]] <- fit_regulated_multi( model = regulated_model, data = random_genes_data[[trial]], output.dir = file.path("sigB_eval",paste0("random_",trial)))
  
   save.image("genexpi_comparison.RData") 
 }
@@ -210,10 +211,10 @@ for(trial in 1:num_trials) {
 ```
 
 ```{r}
-waic_orig <- get_waic_multiple_targets_multi(results_orig)
+waic_orig <- get_waic_regulated_multi(results_orig)
 waic_random <- list()
 for(i in 1:num_trials) {
-  waic_random[[i]] <- get_waic_multiple_targets_multi(random_results[[i]])
+  waic_random[[i]] <- get_waic_regulated_multi(random_results[[i]])
 }
 save.image("genexpi_comparison.RData") 
 ```

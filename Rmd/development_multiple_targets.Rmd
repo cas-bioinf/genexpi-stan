@@ -10,6 +10,7 @@ options(mc.cores = parallel::detectCores())
 library(tidyverse)
 library(bayesplot)
 library(shinystan)
+library(here)
 ```
 
 
@@ -17,11 +18,11 @@ Note: the model is able to fit correctly when measurement_sigma_absolute and mea
 
 
 ```{r}
-multiple_targets_model <- stan_model(file = 'multiple_targets_splines.stan')
+regulated_model <- stan_model(file = here('stan','regulated.stan'))
 ```
 
 ```{r}
-data <- simulate_multiple_targets_spline(3,31,5,seq(1,31,by = 3), 0.2, 0.2, regulator_measured = TRUE, integrate_ode45 = FALSE)
+data <- simulate_regulated_spline(3,31,5,seq(1,31,by = 3), 0.2, 0.2, regulator_measured = TRUE, integrate_ode45 = FALSE)
 print(data$true[c("degradation","sensitivity", "w","b_raw")])
 data.frame(time = 1:data$observed$num_time, regulator = data$true$regulator_expression, target1 = data$true$expression[1,], target2 = data$true$expression[2,], target3 = data$true$expression[3,]) %>%
   gather("profile", "value",-time) %>%
@@ -29,9 +30,9 @@ data.frame(time = 1:data$observed$num_time, regulator = data$true$regulator_expr
 ```
 
 ```{r}
-data <- simulate_multiple_targets_spline(5,31,seq(1,31,by = 3), num_df = 5, measurement_sigma_absolute = 0.1, measurement_sigma_relative = 0.2, regulator_measured = TRUE, integrate_ode45 = FALSE)
+data <- simulate_regulated_spline(5,31,seq(1,31,by = 3), num_df = 5, measurement_sigma_absolute = 0.1, measurement_sigma_relative = 0.2, regulator_measured = TRUE, integrate_ode45 = FALSE)
 
-fit <- sampling(multiple_targets_model, data = data$observed, control = list(adapt_delta = 0.95))
+fit <- sampling(regulated_model, data = data$observed, control = list(adapt_delta = 0.95))
 evaluation_summary(rstan::extract(fit, c("coeffs","initial_condition","sensitivity","degradation", "intercept","w","b","sigma_relative_param","sigma_absolute_param")), data$true, printParamsResults = TRUE)
  summary(fit)$summary[,c("n_eff","Rhat")] %>% as.data.frame() %>% summarise(min_n_eff = min(n_eff),max_Rhat = max(Rhat))
 

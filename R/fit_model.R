@@ -1,4 +1,4 @@
-multiple_targets_init_fun <- function(data){
+regulated_init_fun <- function(data){
   function(chain_id = 0) {
     list(
       initial_condition = array(data$expression[1,], data$num_targets)
@@ -7,28 +7,28 @@ multiple_targets_init_fun <- function(data){
 }
 
 
-multiple_targets_control <- list(adapt_delta = 0.95)
+regulated_control <- list(adapt_delta = 0.95)
 
-fit_multiple_targets <- function(data, model = stan_model(file = 'multiple_targets_splines.stan'), ...) {
+fit_regulated <- function(data, model = stan_model(file = here::here('stan', 'regulated.stan')), ...) {
   rstan::sampling(model, data = data,
-                  init = multiple_targets_init_fun(data), control = multiple_targets_control,
+                  init = regulated_init_fun(data), control = regulated_control,
                   ...)
 }
 
-fit_multiple_targets_multi <- function(data, output.dir,
-                                       model = stan_model(file = 'multiple_targets_splines.stan'),
+fit_regulated_multi <- function(data, output.dir,
+                                       model = stan_model(file = here::here('stan', 'regulated.stan')),
                                        chains = 4,
                                        ...) {
-  #init_per_item <- lapply(data, function(x) { lapply(1:chains, multiple_targets_init_fun(x)) })
-  init_per_item <- lapply(data, multiple_targets_init_fun)
+  #init_per_item <- lapply(data, function(x) { lapply(1:chains, regulated_init_fun(x)) })
+  init_per_item <- lapply(data, regulated_init_fun)
   sampling_multi(model = model, data = data, output.dir = output.dir,
-                 init_per_item = init_per_item, control = multiple_targets_control,
+                 init_per_item = init_per_item, control = regulated_control,
                  chains = chains,
                  ...)
 }
 
 
-get_waic_multiple_targets <- function(fit, target = 1) {
+get_waic_regulated <- function(fit, target = 1) {
   samples_log_lik <- rstan::extract(fit, "log_likelihood")$log_likelihood
   lik_data <- samples_log_lik[,,target]
 
@@ -70,10 +70,10 @@ get_waic_multi <- function(results, waic_fun, cores = parallel::detectCores()) {
   parallel::parSapplyLB(cl, X = 1:length(results), FUN = extract_waic)
 }
 
-get_waic_multiple_targets_multi <- function(results, target = 1, cores = parallel::detectCores()) {
+get_waic_regulated_multi <- function(results, target = 1, cores = parallel::detectCores()) {
 
   waic_fun <- function(fit) {
-    get_waic_multiple_targets(fit, target)
+    get_waic_regulated(fit, target)
   }
 
   get_waic_multi(results, waic_fun, cores)
@@ -81,9 +81,5 @@ get_waic_multiple_targets_multi <- function(results, target = 1, cores = paralle
 
 get_waic_csynth_multi <- function(results, cores = parallel::detectCores()) {
 
-  waic_fun <- function(fit) {
-    get_waic_csynth(fit)
-  }
-
-  get_waic_multi(results, waic_fun, cores)
+  get_waic_multi(results, get_waic_csynth, cores)
 }

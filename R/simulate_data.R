@@ -67,7 +67,7 @@ plot_random_profiles <- function(n, time, scale, length, true_time = time, true_
 }
 
 
-simulate_multiple_targets_spline <- function(num_targets, num_time, measurement_times,
+simulate_regulated_spline <- function(num_targets, num_time, measurement_times,
                                              num_df = NULL,
                                              spline_basis = NULL,
                                              measurement_sigma_absolute_prior_sigma = NULL,
@@ -243,7 +243,7 @@ simulate_multiple_targets_spline <- function(num_targets, num_time, measurement_
       sigma_absolute_param = if(sigma_given) { array(measurement_sigma_absolute,1) } else { numeric(0) }
     ), observed =
 
-      regulation_model_params(
+      regulated_model_params(
         measurement_times = measurement_times,
         regulator_expression = regulator_expression_observed,
         target_expression = t(expression_observed),
