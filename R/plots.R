@@ -83,7 +83,7 @@ fitted_target_observed_plot <- function(fit, data, target = 1, name = NULL,
     geom_point(
       data = data.frame(x = data$measurement_times,  y = data$expression[,target]),
       aes(x=x, y=y), inherit.aes = FALSE, color = "#ba1b1d", size = 3) +
-    ggtitle(paste0("Expression - ", target_name))
+    ggtitle(paste0("Expression obs. - ", target_name))
 
 }
 

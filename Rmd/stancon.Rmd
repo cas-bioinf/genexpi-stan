@@ -35,7 +35,7 @@ rstan_options(auto_write = TRUE)
 
 In determining regulatory interactions within cells, models based on ordinary differential equations (ODE) are a popular choice. Here, we present a reimplementation of one such model in Stan. The model features a spline fit where the resulting spline is a parameter of the ODE. For practical reasons, the model avoids the Stan's ODE solver in favor of a custom solution. We also discuss why the model as traditionally formulated is not well identified and introduce reparametrizations that improve identifiability and make it easier to specify reasonable default priors.
 
-This notebook shows first usable version of the model, but there are still several outstanding issues which we highlight.
+This notebook shows first usable version of the model, but there are still several outstanding issues which we highlight. We nevertheless hope that the modelling approach we took is of interest to the Stan community and can provide inspiration for other models.
 
 # Biological Background
 In a very simplified form the [central dogma](https://en.wikipedia.org/wiki/Central_dogma_of_molecular_biology) of molecular biology may be paraphrased as follows: The DNA contains all of the instructions needed to run a cell and can be divided into coding and non-coding regions. The coding regions of DNA can be *transcribed* to form messenger RNA (mRNA) molecules containing a mirror-copy of the coding region. The messenger RNA is then *translated* to create protein. Proteins perform most of the actual functions of the cells, including control of transcription and translation. This process is regulated at all stages and involves many feedback loops: most importantly, the rate of transcription of a gene is controlled by the abundance of regulatory proteins binding to specific sequences of the DNA near the coding region. The rate of translation and degradation of mRNA can also be regulated separately by other proteins and the rate of degradation of proteins themselves is also affected by other proteins. There are many exceptions where the above simplification does not hold, but the vast majority of cellular life can be described in these terms. 
@@ -615,7 +615,7 @@ regulated_table  %>% kable()
 
 # Exploratory analysis with multiple regulators
 
-Since *purT* is likely not regulated by *sigA*, we might try a combination of multiple regulators. Unless the dataset is much larger than the one we are using here, this is highly speculative as many combinations of two regulators are able to fit a majority of all genes quite well.
+Since *purT* is likely not regulated by *sigA*, we might try a combination of multiple regulators. Unless the dataset is much larger than the one we are using here, this is highly speculative: many combinations of two regulators are able to fit a majority of all genes quite well.
 
 ```{r, cache=TRUE}
 regulators = c("sigA", "sigB")
@@ -647,12 +647,12 @@ regulated_table %>% filter(target == "purT") %>% mutate(waic_two_reg = get_waic_
 
 # Conclusions
 
-While the model as presented is already prepared for use to infer novel regulations, there are some issues that need to be ironed out before we can rely on it. Most notably, we are yet to perform a thorough evaluation and comparison with other tools for the same task. Initial results were actually comparable to a simpler maximum likelihood variant of the model with separate splining and parameter fitting phases [as presented in @Modrak2018]. We are currently working to understand why there is not a marked improvement, as we know that separating splining from parameter fit led to problems for the simpler version.
+While the model as presented already coversthe full workflow to infer novel regulations, there are some issues that need to be ironed out before we can rely on it. Most notably, we are yet to perform a thorough evaluation and comparison with other tools for the same task. Initial results were actually comparable to a simpler maximum likelihood variant of the model with separate splining and parameter fitting phases [as presented in @Modrak2018]. We are currently working to understand why there is not a marked improvement, as we know that some of the incorrect results of the simpler version stemmed from separate splining.
 
-Further workflow steps we are not happy with are the way we fit a multivariete normal distribution to the posterior of regulator expression, the arbitrary way we use WAIC to make decisions and convergence issues that sometimes arise when running the model without observed regulator expression on real data.
+Further workflow steps we are not happy with are the way we fit a multivariete normal distribution to the posterior of regulator expression, the arbitrary way we use WAIC to make decisions, and convergence issues that sometimes arise when running the model without observed regulator expression on real data.
 There is also substantial work to be done in encapsulating the model as a package and providing a cleaner interface.
 
-We nevertheless hope that the modelling approach we took is of interest to the Stan community and can provide inspiration for other models.
+
 
 # Acknowledgements
 
