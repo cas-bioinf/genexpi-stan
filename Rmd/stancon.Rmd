@@ -389,15 +389,16 @@ known_targets <- c("acpA","fbaA","rpmGA","ykpA","yyaF")
 
 
 plot_profiles <- function(expression_data, targets) {
-  expression_data[targets,] %>% as.data.frame() %>% 
+  expression_data[targets,,drop = FALSE] %>% as.data.frame() %>% 
     rownames_to_column("gene") %>% 
     gather("time","expression",-gene) %>%
     mutate(time = as.integer(gsub("min","",time, fixed = TRUE))) %>%
     ggplot(aes(x = time, y = expression, color = gene, linetype = gene)) + geom_line()
 }
 
-plot_profiles(expression_data, putative_targets) + ggtitle("Putative targets")
+plot_profiles(expression_data, "sigA") + ggtitle("Regulator")
 plot_profiles(expression_data, known_targets) + ggtitle("Known targets")
+plot_profiles(expression_data, putative_targets) + ggtitle("Putative targets")
 ```
 
 
