@@ -8,7 +8,8 @@ author: |
   | Martin Modrák
   | Laboratory of Bioinformatics
   | Institute of Microbiology of the Czech Academy of Sciences
-  | martin.modrak@biomed.cas.cz
+  | martin.modrak@biomed.cas.cz, www.martinmodrak.cz
+date: "`r format(Sys.time(), '%d %B %Y')`"
 bibliography: stancon.bib
 ---
 
@@ -17,9 +18,9 @@ library(knitr)
 opts_chunk$set(fig.height=3, fig.path='Figs/',
                echo=TRUE, warning=FALSE, message=FALSE)
 
-#In addition to the libraries listed below,, the Genexpi-stan pacakge requires:
+#In addition to the libraries listed below,, the Genexpi-stan package requires:
 # rstan, deSolve, splines, truncnorm, parallel, loo
-devtools::install(args = "--no-multiarch")  #I need to build the package (and cannot use load_all) to make the functions in the package available when running in parallel).
+devtools::load_all()
 library(genexpiStan)
 library(cowplot)
 library(tidyverse)
@@ -164,7 +165,7 @@ Where $\alpha_j$ is a column vector of spline coefficients and $\beta_j$ serves 
 It is a bit tricky to use Stan's built-in ODE solver with a spline as one of the parameters driving ODE evolution as it needs the value of $y_i$ at arbitrary time points. The most straightforward way - linearly interpolating between precomputed discrete values of $y_i$ requires some hacks and breaks the solver. In principle, $\alpha_i$ could be given to the ODE solver and the spline basis computed for each timepoint the solver needs, but this seemed cumbersome. Instead we decided to follow the approach of [@TitsiasHonkela12]. First we can observe that the regulation ODE is linear in $x_i$ and can be solved for $t \geq 0$:
 
 $$
-x_i(t) = \eta_i e^{-d_i t} + s_i \int_0^t F(\rho_i) e^{-d_i(t-u)} \mathrm{d}u
+x_i(t) = \eta_i e^{-d_i t} + s_i \int_0^t F(\rho_i(u)) e^{-d_i(t-u)} \mathrm{d}u
 $$
 Where $\eta_i$ is the concentration of the target at $t=0$. We then solve the resulting integral numerically via [trapezoid rule](https://en.wikipedia.org/wiki/Trapezoidal_rule)[^2]. Assuming unit timestep, $x_i$ can be computed in a single for loop:
 
@@ -205,7 +206,9 @@ data.frame(time = time, regulator = regulator, target1 = target1, target2 = targ
   geom_line() + 
   scale_color_hue(labels = c("regulator", params_to_legend(params1), params_to_legend(params2), params_to_legend(params3))) + ggtitle("Non-identifiability due to w and b","All targets have s = 1, d = 0.5")
 ```
+
 Transformations of $s$ and $d$ together may also have very minor effect on the resulting expression. While the resulting expression profiles are more different than in the previous case, those differences are still very small compared to the noise observed in real data:
+
 ```{r, fig.cap="The red dots represent measurements that have approximately equal likelihood for each of the shown true target profiles, assuming $\\sigma \\simeq 0.5$"}
 time <- seq(0,2,length.out = 100)
 regulator <- sin(time * 4) + 1
@@ -306,7 +309,6 @@ $$
 w_{i,j} &= I_{i,j} \gamma_{i,j} \frac{\sigma^{\rho}_i}{\mathrm{sd}(y_j)} \\
 b_i &= \mu^{\rho}_i - \sum_j w_{i,j} E(y_j) \\
 s_i &= \frac{a_i d_i \max\tilde{x_i} }{ E(F(\rho_i)) } \\
-
 \sum_j \gamma_{i,j} &= 1 , & \gamma_{i,j} > 0 \\
 \end{align}
 $$
@@ -321,7 +323,7 @@ a_i &\sim  N(1,\tau_{a})  &| a_i > 0 \\
 log(d_i) &\sim N(\nu_d,\tau_d) & 
 \end{align}
 $$
-Where all the hyperparameters are given by user, but sensible defaults can be given as the hyperparameters are decoupled from the scale of the data. Since the sigmoid $F$ is mostly saturated outside $[-5,5]$, we use $\tau_{\rho,\mu} = \tau_{\rho,\sigma} = 5$. Further we expect $a_i$ should lie mostly in $[0,2]$ (e.g. if given more time the gene will unlikely raise to more than twice the maximum observed), giving $\tau_a = \frac{1}{2}$ and finally we expect degradation to be non-negligible but less than 1 (e.g. all mRNA degrading in a single unit of time), giving $\nu_d = -2$ and $\tau_d = 1$.
+Where all the hyperparameters are given by user, but sensible defaults can be given as the hyperparameters are decoupled from the scale of the data. Since the sigmoid $F$ is mostly saturated outside $[-5,5]$, we use $\tau_{\rho,\mu} = \tau_{\rho,\sigma} = 5$. Further we expect $a_i$ should lie mostly in $[0,2]$ (e.g. if given more time with similar regulatory input the gene will unlikely raise to more than twice the maximum observed), giving $\tau_a = \frac{1}{2}$ and finally we expect degradation to be non-negligible but less than 1 (e.g. all mRNA degrading in a single unit of time), giving $\nu_d = -2$ and $\tau_d = 1$.
 
 ## The constant synthesis model
 
@@ -350,7 +352,7 @@ The assumed workflow when using the model to infer novel regulations proceeds as
 5. Fit the main model to each putative target separately
 6. Compare the fit with the main model to the fit of the constant synthesis model
 
-In the following example, we will use 5 known and 4 putative targets of the *sigA* regulator. In all of the following we use cubic spline with 6 degrees of freedom, $c_scale = 5$ as the basis for the main model.
+In the following example, we will use 5 known and 4 putative targets of the *sigA* regulator. In all of the following we use cubic spline with 6 degrees of freedom, $c_{scale} = 5$ as the basis for the main model.
 
 ```{r}
 #Globally used params for the algorithm
@@ -402,10 +404,10 @@ plot_profiles(expression_data, known_targets) + ggtitle("Known targets")
 
 Below are posterior samples from fitting the constant synthesis model to all of the targets.
 
-In addition to samples from posterior true expression we also show replicates of the measured values, to get a better sense of the level of noise involved.
+In addition to samples from posterior true expression we also show simulated replicates of the measured values, to get a better sense of the level of noise expected by the model.
 
 
-```{r cache=TRUE}
+```{r cache=TRUE, results = "hide"}
 csynth_model <- stan_model(file = here('constant_synthesis.stan'))
 ```
 
@@ -413,6 +415,8 @@ csynth_model <- stan_model(file = here('constant_synthesis.stan'))
 
 targets <- c(putative_targets, known_targets)
 data_csynth <- list()
+fits_csynth <- list()
+waic_csynth <- array(-1, length(targets))
 for(t in 1:length(targets)) {
   data_csynth[[t]] <- list(
     num_measurements = length(measurement_times),
@@ -424,20 +428,16 @@ for(t in 1:length(targets)) {
     asymptotic_normalized_state_prior_sigma = default_params_prior$asymptotic_normalized_state_prior_sigma,
     degradation_prior_mean = default_params_prior$degradation_prior_mean,
     degradation_prior_sigma = default_params_prior$degradation_prior_sigma
-  )  
+  )
+  fits_csynth[[t]] <- sampling(csynth_model, data_csynth[[t]])
+  waic_csynth[t] <- get_waic_csynth(fits_csynth[[t]])
 }
-
-if(!dir.exists(here("out"))) {
-  dir.create(here("out"))
-}
-
-results_csynth <- sampling_multi(csynth_model, data_csynth, output.dir = here("out","csynth"))
 ```
 
 ```{r, cache=TRUE}
 plots <- list()
 for(t in 1:length(targets)) {
-  fit <- sampling_multi_read_fit(results_csynth, t)
+  fit <- fits_csynth[[t]]
   plot1 <- fitted_csynth_plot(fit, data_csynth[[t]], name = targets[t])
   plot2 <- fitted_csynth_observed_plot(fit, data_csynth[[t]], name = targets[t])
   plot_grid(plot1, plot2, ncol = 2) %>% print()
@@ -448,12 +448,11 @@ for(t in 1:length(targets)) {
 
 ## Assesing constant synthesis fit
 
-But how to determine which genes are "fit well" by the constant synthesis model? The best way would probably be to use leave-one-out crossvalidation, but that is computationally prohibitive as hundreds of genes need to be checked in practice. Instead we approximate the value with WAIC using the ```loo``` package [@looPackage] which is feasible and fits well with our intuition of the ordering of the quality of fits. Here are the WAIC scores for the constant synthesis fits:
+But how to determine which genes are "fit well" by the constant synthesis model? The best way would probably be to use leave-one-out crossvalidation, but that is computationally prohibitive as hundreds of genes need to be checked in practice. Instead we approximate the value with WAIC using the ```loo``` package [@looPackage] which is feasible and aligns well with our intuition of the ordering of the quality of fits. Here are the WAIC scores for the constant synthesis fits:
 
 ```{r,cache=TRUE}
-waic_csynth <- get_waic_csynth_multi(results_csynth)
 csynth_table <- tibble(target = targets, waic_csynth = waic_csynth)
-csynth_table
+csynth_table %>% kable()
 ```
 
 Our workflow currently assumes that a human inspects the fits and specifies a WAIC threshold manually. The threshold can be relatively conservative, the only thing that needs to be avoided are non-identifiabilities due to conflict between fits with $w = 0$ and fits with $w \gg 0$. In this example, we will set threshold to 0, elminating only *kinE* from further consideration.
@@ -461,14 +460,14 @@ Our workflow currently assumes that a human inspects the fits and specifies a WA
 
 # Estimating regulator expression from known targets
 
-The motivation for using known regulations is that the data constrain the true expression quite weakly. This is not an issue for the putative targets, but becomes problematic for the expression of the regulators. When trying to determine new regulations, only a single target at a time needs to be fit, because the model assumes that all the regulations actually take place and thus a single regulation that is actually not true may shift the parameter values considerably. While it would be in principle possible to marginalize over the power set of targets to get estimates of which regulations take place in a single fit, this is computationally infeasible. But when fitting each target separately, the estimated expression of regulators may not be consistent across targets, possibly leading to false positives.
+The motivation for using known regulations is that the data constrain the true expression quite weakly. This is not an issue for the putative targets, but becomes problematic for the expression of the regulators. When trying to determine new regulations, only a single target at a time needs to be fit, because the model assumes that all the regulations actually take place and thus a single regulation that is not, in fact, correct may shift the parameter values (especially the spline params $\alpha$) considerably. While it would be in principle possible to marginalize over the power set of targets to get estimates of probabilities of the individual regulations, this is computationally infeasible. The downside of fitting each target separately is that the estimated expression of regulators may not be consistent across targets, possibly leading to false positives.
 
-Similarly to [@TitsiasHonkela12], our model is able to use known regulations to reduce the uncertainty in regulator expression, hopefully elminating any gross inconsistencies between individual fits for putative targets. This is a simple side-effect of the Bayesian treatment, where after fitting the model with all the known targets at once, we can extract the posterior for $y$ and use it as input when fitting putative targets.
+Similarly to [@TitsiasHonkela12], our model is able to use known regulations to reduce the uncertainty in regulator expression, hopefully elminating any gross inconsistencies between individual fits for putative targets. This is a simple side-effect of the Bayesian treatment, where after fitting the model with all the known targets at once, we can extract the posterior for $y$ and use it as input when fitting putative targets. This step is however optional and if no targets are known with high certainty, it can be skipped.
 
-But first, let us see the posterior samples from fitting the regulator with 0 targets (equivalent to simply splining the profile). The red dots are the measured values:
+First, let us see the posterior samples from fitting the regulator with 0 targets (equivalent to just fitting a spline). The red dots are the measured values:
 
 
-```{r load_model}
+```{r load_model, cache = TRUE, results = "hide"}
 #Load the model
 multiple_targets_model <- stan_model(file = here('multiple_targets_splines.stan'))
 ```
@@ -521,16 +520,18 @@ fitted_regulator_plot(fit_regulator_all_info, data, name = paste0(source, " all 
 
 ## Transferring the learned expression to other fits
 
-To transfer this "learned" expression of the regulator to other fits, we need to make additional assumptions. The most direct way is to treat the fitted spline coefficients $\alpha_j$ as samples from a multivariete normal (MVN) distribution. Some caution has to be excersised since the distribution of coefficients has heavier tails than expected:
+To transfer this "learned" expression of the regulator to other fits, we need to make additional assumptions. The most direct way is to treat the fitted spline coefficients $\alpha_j$ as samples from a multivariete normal (MVN) distribution. Some caution has to be excersised since the distribution of coefficients is in general not MVN. Although individual components and even pairs may look approximately normal, the distribution is skewed and has high kurtosis:
 
 ```{r,fig.height=5}
 pairs(fit_regulator_all_info, pars = "coeffs")
 samples_coeffs <- rstan::extract(fit_regulator_all_info,"coeffs")$coeffs[,,1]
 mvn_test_results <- mvn(samples_coeffs, mvnTest = "mardia", desc = FALSE, multivariatePlot = "qq")
-mvn_test_results$multivariateNormality
+mvn_test_results$multivariateNormality %>% kable()
 ```
 
-The MVN approximation is imperfect, and in practice, we have found that it still gives a lot of leeway for the putative target fits to move away from this estimated distribution as it is only half the data used in the model. To combat this effect, we shrink the "learned" distribution by multiplying the covariance matrix by $0.5$. We currently do not understand deeply why the shrinking leads to better behavior, and it is a simple hack which we should improve upon and provide a more principled way.
+The MVN approximation is still the most practical. For simplicity we fit MVN by the method of moments. In practice, we have found that MVN fitted this way still gives a lot of leeway for the putative target fits to move away from this estimated distribution as it is only half the data used in the model. To combat this effect, we shrink the "learned" distribution by multiplying the covariance matrix by $0.5$. We currently do not understand deeply why the shrinking leads to better behavior, and it is a simple hack which we should improve upon and provide a more principled way to determine appropriate MVN parameters or even use a different multivariate distribution to account for the skew and kurtosis.
+
+For comparison here are samples from the original posterior and the scaled and unscaled MVN approximation:
 
 ```{r, fig.height=5}
 n_samples <- 100
@@ -562,11 +563,17 @@ plot_grid(plot1, plot2, NULL, plot3, nrow = 2)
 
 ## Fitting the model for putative targets
 
-Now, we can fit the actual model for the remaining three putative targets: 
+Now we can fit the actual model for the remaining three putative targets.
+Since known targets are available, the MVN approximation of the posterior of the spline coefficients $\alpha$ is used as a prior for $\alpha$ when fitting the putative targets instead of passing the regulator expression to the model. If there are no known targets, the regulator expression is provided directly. 
+
+Below are samples of the posterior distribution of target expression and simulated replicates of observed expression:
+
 ```{r,cache=TRUE}
 targets <- c("purT", "yhdL", "codV")
 
 data_regulated <- list()
+fits_regulated <- list()
+waic_regulated <- array(-1, length(targets))
 coeffs_prior <- coeffs_prior_from_fit(fit_regulator_all_info, covariance_scale = 1)
 for(t in 1:length(targets)) {
   data_regulated[[t]] <- regulation_model_params(
@@ -578,18 +585,14 @@ for(t in 1:length(targets)) {
     params_prior = default_params_prior,
     coeffs_prior = coeffs_prior
   )  
+  fits_regulated[[t]] <- sampling(multiple_targets_model, data_regulated[[t]])
+  waic_regulated[t] <- get_waic_multiple_targets(fits_regulated[[t]], target = 1)
 }
-
-if(!dir.exists(here("out"))) {
-  dir.create(here("out"))
-}
-
-results_regulated <- sampling_multi(multiple_targets_model, data_regulated, output.dir = here("out","regulated"))
 ```
 
 ```{r,cache=TRUE}
 for(t in 1:length(targets)) {
-  fit <- sampling_multi_read_fit(results_regulated, t)
+  fit <- fits_regulated[[t]]
   plot1 <-  fitted_target_plot(fit, data_regulated[[t]], name = targets[t])
   plot2 <- fitted_target_observed_plot(fit, data_regulated[[t]], name = targets[t])
   plot_grid(plot1, plot2, ncol = 2) %>% print()
@@ -599,13 +602,12 @@ for(t in 1:length(targets)) {
 
 ## Comparison to constant synthesis model
 
-We can now use WAIC to compare the fits of the putative regulators to the csynth fits. Once again, in practice, hundreds of putative targets might need to be examined. It is assumed that a human will inspect some of the fits and specify a minimal WAIC improvement over the constant synthesis model and possibly also an absolute WAIC threshold to consider fits adequate. Both visual inspection and the computed WAIC show that *purT* cannot be fit by *sigA* while both *yhdL* and *codV* are fit well.
+We can now use WAIC to compare the fits of the putative regulators to the csynth fits. Once again, in practice, hundreds of putative targets might need to be examined. It is assumed that a human will inspect some of the fits and specify a minimal WAIC improvement over the constant synthesis model and possibly also an absolute WAIC threshold to consider fits adequate. Both visual inspection and the difference in WAIC show that *purT* cannot be fit by *sigA* while both *yhdL* and *codV* are fit well. It is however important to keep in mind that a good fit is a necessary but not sufficient condition for the regulation to be considered real.
 
 ```{r}
-waic_regulated <- get_waic_multiple_targets_multi(results_regulated)
 regulated_table <- tibble(target = targets, waic_regulated = waic_regulated) %>%
   left_join(csynth_table, by = "target")
-regulated_table
+regulated_table  %>% kable()
 ```
 
 
@@ -643,12 +645,17 @@ regulated_table %>% filter(target == "purT") %>% mutate(waic_two_reg = get_waic_
 
 # Conclusions
 
-TODO
+While the model as presented is already prepared for use to infer novel regulations, there are some issues that need to be ironed out before we can rely on it. Most notably, we are yet to perform a thorough evaluation and comparison with other tools for the same task. Initial results were actually comparable to a simpler maximum likelihood variant of the model with separate splining and parameter fitting phases [as presented in @Modrak2018]. We are currently working to understand why there is not a marked improvement, as we know that separating splining from parameter fit led to problems for the simpler version.
+
+Further workflow steps we are not happy with are the way we fit a multivariete normal distribution to the posterior of regulator expression, the arbitrary way we use WAIC to make decisions and convergence issues that sometimes arise when running the model without observed regulator expression on real data.
+
+We nevertheless hope that the modelling approach we took is of interest to the Stan community and can provide inspiration for other models.
 
 # Acknowledgements
 
-TODO
-The Stan team, help at forums.
+Huge thanks belong to the Stan development team and the Stan community. Without the help I got from their tranining materials and answers on the forums, I would not be able to move this project forward. 
+
+This work was supported by C4Sys research infrastructure project (MEYS project No: LM20150055).
 
 # Session Info
 ```{r}
