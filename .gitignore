@@ -3,3 +3,8 @@ out
 Figs
 stancon_cache
 stancon_files
+.Rproj.user
+*.rds
+.Rhistory
+*.RData
+*.nb.html
