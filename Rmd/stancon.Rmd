@@ -51,7 +51,9 @@ The present work was motivated by reading [@TitsiasHonkela12] who developed a fu
 
 # Data
 
-The data we will work with in this notebook is a time series of 14 microarray measurements of expression of 4008 genes in the bacterium *Bacillus subtilis* during germination (transition from dormant spores to normal metabolism), depositioned in the Gene Expression Omnibus under GSE6865 [@Keijser2007,  https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE6865].
+The data we will work with in this notebook is a time series of 14 microarray measurements of expression of 4008 genes in the bacterium *Bacillus subtilis* during germination (transition from dormant spores to normal metabolism). The data is depositioned in the Gene Expression Omnibus under GSE6865 [@Keijser2007,  https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE6865]. The individual samples were taken from a single fermentor where the bacteria grew and represent averages of a large number of cells. The cells are expected to be mostly synchronized by germination initiation at $t=0$ and (hopefully) stayed in sync for the duration of the experiment. 
+
+While recent methods allow expression measurement for individual cells, such data are expensive, usually gathered only at a single time point, contain large amount of noise and introduce additional analytical challenges (I tried and failed). To our knowledge, no succesful inference of transcriptional regulations has ever been made from single cell data at the time of this writing. 
 
 ```{r}
 #Try to download the data, if it was not already present on the computer
@@ -299,11 +301,22 @@ There are probably many more non-identified scenarios, especially when multiple 
 
 ## Reparametrization
 
-First we realized that when there is a good fit with $w < 0$ and a similarly good one with $w > 0$, there is nothing we can do to make the model identifiable, so we decided to make the user specify the signs of regulatory interactions $I_{i,j} = sgn(w_{i,j})$  as data. This is not a big hindrance as this type of regulation model is mostly employed to test direct regulations by sigma factors which are expected to always have $w > 0$. If the sign of $w$ is important and there is only one regulator, it is possible to fit each target separately with different values of $I_{1,1}$. The only truly problematic case is when fitting a model with multiple regulators and unknown $I$, but since two regulators already often overfit on most practical datasets this is of little practical concern.
+First we realized that when there is a good fit with $w < 0$ and a similarly good one with $w > 0$, there is nothing we can do to make the model identifiable, so we decided to make the user specify the signs of regulatory interactions $I_{i,j} = sgn(w_{i,j})$  as data. This is not a big hindrance as this type of regulation model is mostly employed to test direct regulations by sigma factors which are expected to always have $w > 0$. If the sign of $w$ is important and there is only one regulator, it is possible to fit each target separately with different values of $I_{1,1}$. The only truly problematic case is when fitting a model with multiple regulators and unknown $I$, but since two regulators already often overfit on most practical datasets this is of little practical concern. Additionally, user may set some $I_{i,j} = 0$ to indicate known absence of regulation.
 
 Some of the non-identifiabilities arise because certain simple aspects of the resulting expression (e. g. magnitude) are influenced by multiple parameters. To get rid of those complex dependencies, we introduced several reparametrizations. The only parameter we kept directly is the degradation parameter $d_i$, which also has the nice property that it does not depend on the scale of the expression data (only on the length of the timestep).
 
-Instead of $s_i,b_i$ and $w_{i,j}$, we introduce $\mu^{\rho}_i$, the mean regulatory input, $\sigma^{\rho}_i$, the sd of the regulatory input, $\gamma_i$ a simplex of relative regulator weights and $a_i$ the asymptotic normalized state. All of those parameters are also decoupled from the actual values of the expression data. The new parameters are connected with the original parameters as follows:
+Instead of $s_i,b_i$ and $w_{i,j}$, we introduce $\mu^{\rho}_i$, the mean regulatory input, $\sigma^{\rho}_i$, the sd of the regulatory input, $\gamma_i$ a simplex of relative regulator weights and $a_i$ the asymptotic normalized state. All of those parameters are also decoupled from the actual values of the expression data. Formally:
+
+$$
+\begin{align}
+\mu^{\rho}_i &= E(\rho_i) \\
+\sigma^{\rho}_i &= \mathrm{sd}(\rho_i) \\
+a_i &= \frac{s_i E(F(\rho_i))}{d_i \max{\tilde{x_i}}} \\
+\end{align}
+$$
+
+Where $E$ and $\mathrm{sd}$ correspond to the sample mean and standard deviation.
+Solving for the original parameters we get:
 
 $$
 \begin{align}
@@ -313,7 +326,7 @@ s_i &= \frac{a_i d_i \max\tilde{x_i} }{ E(F(\rho_i)) } \\
 \sum_j \gamma_{i,j} &= 1 , & \gamma_{i,j} > 0 \\
 \end{align}
 $$
-Where $E$ and $\mathrm{sd}$ correspond to the sample mean and standard deviation. The formula for $w_{i,j}$ assumes independence among the regulators which does not hold, but handling the covariance structure correctly would be difficult and could lead to multiple solutions. The interpretion of $a_i$ is that if the expression stays at its mean level, e.g. $F(\rho_i) \simeq E(F(\rho_i))$ and $t \rightarrow \infty$ then $x_i(t) \rightarrow a_i \max\tilde{x_i}$. Also note that using $\max\tilde{x_i}$ to scale $s_i$ means the model is not completely generative, as we cannot generate $\tilde{x_i}$ before we generate $s_i$, but this has shown to not be a problem in practice.
+The formula for $w_{i,j}$ assumes independence among the regulators which does not hold, but handling the covariance structure correctly would be difficult and could lead to multiple solutions. The interpretion of $a_i$ is that if the expression stays at its mean level, e.g. $F(\rho_i) \simeq E(F(\rho_i))$ and $t \rightarrow \infty$ then $x_i(t) \rightarrow a_i \max\tilde{x_i}$. In other words $a_i$ is related to the hypothetical steady state long time in the future. Nevertheless the cells do not reach steady state for this datasets (and indeed for most datasets). Also note that using $\max\tilde{x_i}$ to scale $s_i$ means the model is not completely generative, as we cannot generate $\tilde{x_i}$ before we generate $s_i$, but this has shown to not be a problem in practice.
 
 The reparametrization not only helped identify the posterior but it is also much easier to specify priors for those parameters! We ended up with the following priors:
 $$
@@ -450,7 +463,7 @@ for(t in 1:length(targets)) {
 
 ## Assesing constant synthesis fit
 
-But how to determine which genes are "fit well" by the constant synthesis model? The best way would probably be to use leave-one-out crossvalidation, but that is computationally prohibitive as hundreds of genes need to be checked in practice. Instead we approximate the value with WAIC using the ```loo``` package [@looPackage] which is feasible and aligns well with our intuition of the ordering of the quality of fits. Here are the WAIC scores for the constant synthesis fits:
+But how to determine which genes are "fit well" by the constant synthesis model? The best way would probably be to use leave-one-out crossvalidation, but that is computationally prohibitive as hundreds of genes need to be checked in practice. Instead we approximate the value with WAIC using the ```loo``` package [@looPackage] which is feasible and aligns well with our intuition of the ordering of the quality of fits. We also tried the `looic` criterion, which has better theoretical properties, but yields almost exactly the same results for all data we tested so far and is more expensive to compute. We note that both WAIC and `looic` report warnings for almost all of our fits, indicating limited reliability. Here are the WAIC scores for the constant synthesis fits:
 
 ```{r,cache=TRUE}
 csynth_table <- tibble(target = targets, waic_csynth = waic_csynth)
