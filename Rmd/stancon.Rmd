@@ -544,7 +544,9 @@ mvn_test_results <- mvn(samples_coeffs, mvnTest = "mardia", desc = FALSE, multiv
 mvn_test_results$multivariateNormality %>% kable()
 ```
 
-The MVN approximation is still the most practical. For simplicity we fit MVN by the method of moments. In practice, we have found that MVN fitted this way still gives a lot of leeway for the putative target fits to move away from this estimated distribution as it is only half the data used in the model. To combat this effect, we shrink the "learned" distribution by multiplying the covariance matrix by $0.5$. We currently do not understand deeply why the shrinking leads to better behavior, and it is a simple hack which we should improve upon and provide a more principled way to determine appropriate MVN parameters or even use a different multivariate distribution to account for the skew and kurtosis.
+The MVN approximation is still the most practical. For simplicity we fit MVN by the method of moments. In practice, we have found that MVN fitted this way still gives a lot of leeway for the putative target fits to move away from this estimated distribution as it is only half the data used in the model. To combat this effect, we shrink the "learned" distribution by multiplying the covariance matrix by $0.5$. We currently do not understand deeply why the shrinking leads to better behavior, and it is a simple hack which we should improve upon and provide a more principled way to determine appropriate MVN parameters or even use a different multivariate distribution to account for the skew and kurtosis. 
+
+As suggested by one of the reviewers, we also tried to fit a multivariate mixture to the distribution using the `mixtools` package, but that did result in a very similar distribution and did not improve behavior.
 
 For comparison here are samples from the original posterior and the scaled and unscaled MVN approximation:
 
