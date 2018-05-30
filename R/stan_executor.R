@@ -2,7 +2,7 @@ sampling_multi_filename <- function(output.dir, id, chain) {
   file.path(output.dir, paste0("stan_out_",id,"_c",chain,".csv"))
 }
 
-sampling_multi <- function(model, data, output.dir, chains = 4, cores = parallel::detectCores(), init_per_item = NULL, ...) {
+sampling_multi <- function(model, data, output.dir, chains = 4, cores = parallel::detectCores(), init_per_item = NULL, ids_to_compute = 1:length(data),  ...) {
   cl <- parallel::makeCluster(cores, useXDR = FALSE)
   on.exit(parallel::stopCluster(cl))
 
@@ -51,10 +51,12 @@ sampling_multi <- function(model, data, output.dir, chains = 4, cores = parallel
   parallel::clusterExport(cl, varlist = ".dotlist", envir = environment())
 
   parallel::clusterExport(cl, varlist = c("data", "output.dir","init_per_item"), envir = environment())
-  items <- 1:(chains * length(data))
+
+  ids <- rep(ids_to_compute, each = chains)
+  items <- ((rep(ids_to_compute, each = chains) - 1) * chains  + rep(1:chains, times = length(ids_to_compute)))
+
   results_flat <-  parallel::parSapplyLB(cl, X = items, FUN = fit_fun)
 
-  ids <- floor( (items - 1) / chains) + 1
   results <- list()
   for(i in 1:length(data)) {
     results[[i]] <- results_flat[ids == i]

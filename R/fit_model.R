@@ -17,13 +17,13 @@ fit_regulated <- function(data, model = stan_model(file = here::here('stan', 're
 
 fit_regulated_multi <- function(data, output.dir,
                                        model = stan_model(file = here::here('stan', 'regulated.stan')),
-                                       chains = 4,
+                                       chains = 4, ids_to_compute = 1:length(data),
                                        ...) {
   #init_per_item <- lapply(data, function(x) { lapply(1:chains, regulated_init_fun(x)) })
   init_per_item <- lapply(data, regulated_init_fun)
   sampling_multi(model = model, data = data, output.dir = output.dir,
                  init_per_item = init_per_item, control = regulated_control,
-                 chains = chains,
+                 chains = chains, ids_to_compute = ids_to_compute,
                  ...)
 }
 

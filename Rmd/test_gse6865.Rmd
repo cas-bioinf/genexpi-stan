@@ -14,6 +14,7 @@ library(loo)
 library(MVN)
 library(bayesplot)
 library(here)
+devtools::load_all()
 ```
 
 
@@ -22,9 +23,19 @@ library(here)
 The original source of data: (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE6865)
 
 ```{r}
-temp <- tempfile();
-download.file("ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE6nnn/GSE6865/matrix/GSE6865_series_matrix.txt.gz", temp)
-gse6865_raw_df = read.delim(gzfile(temp), comment.char = "!") #Intermediate data frame representation
+#Try to download the data, if it was not already present on the computer
+
+data_dir <- here("local_data")
+if(! dir.exists(data_dir)) {
+  dir.create(data_dir)
+}
+data_file <- here("local_data","GSE6865_series_matrix.txt.gz")
+if(!file.exists(data_file)) {
+  download.file("ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE6nnn/GSE6865/matrix/GSE6865_series_matrix.txt.gz", data_file)
+}
+
+# Read and preprocess the data
+gse6865_raw_df = read.delim(gzfile(data_file), comment.char = "!") #Intermediate data frame representation
 
 # Raw profile data. We scale by 1000 to get to more wieldy values
 gse6865_raw = as.matrix(gse6865_raw_df[,2:15]) / 1000
@@ -44,7 +55,7 @@ gse6865_raw[na2,2] = 0.5 * gse6865_raw[na2,1] + 0.5 * gse6865_raw[na2,3]
 #cleanup the intermediate results
 rm(gse6865_raw_df)
 rm(na2)
-rm(temp)
+rm(data_file)
 
 ```
 ```{r}
@@ -69,31 +80,6 @@ sigB_params_prior <-  params_prior(
   intercept_prior_sigma = 2
 )
 
-```
-
-#Estimate sigma_absolute
-```{r}
-sigma_absolute_model <- stan_model(file = 'estimate_sigma_absolute.stan')
-```
-
-```{r}
-low_expression_genes <- c("abfA","dppD", "feuC","ytmI","yqdB","ykrU")
-data_sigma_absolute = list(
-  num_measurements = length(measurement_times),
-  num_targets = length(low_expression_genes),
-  expression = expression_data[low_expression_genes,],
-  sigma_absolute_prior_sigma = 0.2,
-  sigma_relative = 0.3
-)
-
-fit_sigma_absolute <- sampling(sigma_absolute_model, data = data_sigma_absolute)
-fit_sigma_absolute
-sigma_absolute_samples <- rstan::extract(fit_sigma_absolute)$sigma_absolute
-sigma_absolute_mean <- mean(sigma_absolute_samples)
-sigma_absolute_sigma <- sd(sigma_absolute_samples)
-density_points <- seq(min(sigma_absolute_samples), max(sigma_absolute_samples), length.out = 100)
-ggplot(data.frame(x = sigma_absolute_samples), aes(x=x)) + geom_density() + 
-  geom_line(data = data.frame(x=density_points, y = dtruncnorm(density_points, a = 0, mean = sigma_absolute_mean, sd = sigma_absolute_sigma)), aes(y = y), color = "blue")
 ```
 
 
@@ -286,7 +272,9 @@ for(t in 1:length(targets)) {
  
 }
 
-results_target <- fit_regulated_multi(data_target, output.dir = "out/test_target")
+results_target <- fit_regulated_multi(data_target, output.dir = here("out","test_target"))
+
+saveRDS(results_target, "results_links.rds")
 
 fits_target <- list()
    
