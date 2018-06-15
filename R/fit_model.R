@@ -1,7 +1,9 @@
 regulated_init_fun <- function(data){
   function(chain_id = 0) {
+    initial_condition <- data$expression[1,]
+    initial_condition[initial_condition < 1e-12] <- 1e-12
     list(
-      initial_condition = array(data$expression[1,], data$num_targets)
+      initial_condition = array(initial_condition, data$num_targets)
     )
   }
 }
@@ -28,29 +30,43 @@ fit_regulated_multi <- function(data, output.dir,
 }
 
 
-get_waic_regulated <- function(fit, target = 1) {
-  samples_log_lik <- rstan::extract(fit, "log_likelihood")$log_likelihood
-  lik_data <- samples_log_lik[,,target]
-
-  waic(lik_data)$estimates["waic","Estimate"]
+fit_csynth <- function(data, model = stan_model(file = here::here('stan', 'constant_synthesis.stan')), ...) {
+  rstan::sampling(model, data = data,
+                  ...)
 }
 
-get_waic_csynth <- function(fit) {
-  samples_log_lik <- rstan::extract(fit, "log_likelihood")$log_likelihood
-  lik_data <- samples_log_lik
-
-  waic(lik_data)$estimates["waic","Estimate"]
+fit_csynth_multi <- function(data, output.dir,
+                                model = stan_model(file = here::here('stan', 'constant_synthesis.stan')),
+                                chains = 4, ids_to_compute = 1:length(data),
+                                ...) {
+  sampling_multi(model = model, data = data, output.dir = output.dir,
+                 chains = chains, ids_to_compute = ids_to_compute,
+                 ...)
 }
 
 
-get_waic_multi <- function(results, waic_fun, cores = parallel::detectCores()) {
+get_log_lik_regulated <- function(fit, target = 1) {
+  samples_log_lik <- rstan::extract(fit, "log_likelihood")$log_likelihood
+  samples_log_lik[,,target]
+}
+
+get_log_lik_csynth <- function(fit) {
+  rstan::extract(fit, "log_likelihood")$log_likelihood
+}
+
+get_loo_genexpi <- function(fit) {
+  log_lik <- extract_log_lik(fit, parameter_name = "log_likelihood", merge_chains = FALSE)
+  loo(log_lik, r_eff = relative_eff(exp(log_lik)))
+}
+
+process_fit_multi <- function(results, fun, cores = parallel::detectCores()) {
   cl <- parallel::makeCluster(cores, useXDR = FALSE)
   on.exit(parallel::stopCluster(cl))
 
 
-  extract_waic <- function(id) {
+  process <- function(id) {
     fit <- sampling_multi_read_fit(results, id)
-    waic_fun(fit)
+    fun(fit)
   }
 
   dependencies <- c("rstan","Rcpp","genexpiStan","loo")
@@ -64,22 +80,32 @@ get_waic_multi <- function(results, waic_fun, cores = parallel::detectCores()) {
                            suppressPackageStartupMessages(require(rstan, quietly = TRUE)))
   parallel::clusterEvalQ(cl, expr =
                            suppressPackageStartupMessages(require(loo, quietly = TRUE)))
+  parallel::clusterEvalQ(cl, expr =
+                           suppressPackageStartupMessages(require(genexpiStan, quietly = TRUE)))
 
   parallel::clusterExport(cl, varlist = c("results"), envir = environment())
 
-  parallel::parSapplyLB(cl, X = 1:length(results), FUN = extract_waic)
+  parallel::parLapplyLB(cl, X = 1:length(results), fun = process)
 }
 
-get_waic_regulated_multi <- function(results, target = 1, cores = parallel::detectCores()) {
+waic_estimate <- function(log_lik) {
+  waic(log_lik)$estimates["waic","Estimate"]
+}
 
-  waic_fun <- function(fit) {
-    get_waic_regulated(fit, target)
+process_log_lik_regulated_multi <- function(results, target = 1, fun, cores = parallel::detectCores()) {
+
+  process_fun <- function(fit) {
+    fun(get_log_lik_regulated(fit, target))
   }
 
-  get_waic_multi(results, waic_fun, cores)
+  process_fit_multi(results, process_fun, cores)
 }
 
-get_waic_csynth_multi <- function(results, cores = parallel::detectCores()) {
+process_log_lik_csynth_multi <- function(results, fun = waic, cores = parallel::detectCores()) {
 
-  get_waic_multi(results, get_waic_csynth, cores)
+  process_fun <- function(fit) {
+    fun(get_log_lik_csynth(fit))
+  }
+
+  process_fit_multi(results, process_fun, cores)
 }

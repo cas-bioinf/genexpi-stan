@@ -174,3 +174,18 @@ regulated_model_params <- function(
 
   unlist(list(base_params, spline_params, params_prior, measurement_sigma, coeffs_prior), recursive = FALSE)
 }
+
+csynth_model_params <- function(measurement_times, measurement_sigma, params_prior, target_expression){
+  if(measurement_sigma$sigma_given != 1) {
+    stop("Constant synthesis model requires sigma to be given")
+  }
+  base_params <- list(
+    num_measurements = length(measurement_times),
+    measurement_times = measurement_times,
+    expression = target_expression,
+    measurement_sigma_absolute = measurement_sigma$sigma_absolute_data[1],
+    measurement_sigma_relative = measurement_sigma$sigma_relative_data[1]
+  )
+
+  unlist(list(base_params, params_prior), recursive = FALSE)
+}

@@ -1,0 +1,151 @@
+---
+title: "HrdB - unknown profiles"
+output: html_notebook
+---
+
+```{r setup}
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+library(tidyverse)
+library(bayesplot)
+library(here)
+library(cowplot)
+library(readxl)
+devtools::load_all()
+```
+
+```{r}
+res_orig <- read_excel(here("hrdB","HrdB model parameters.xlsx"),sheet = "Sheet1") %>% 
+  rename(fit_quality = "fit quality") %>%
+  select(target:fit_quality)
+
+gse18489_raw <- read_excel(here("hrdB","HrdB model parameters.xlsx"), sheet = "profiles") %>%
+  select(SCO,"20":"60") 
+
+measurement_times_raw <- names(gse18489_raw)[-1] %>% as.integer() 
+
+gse18489 <- gse18489_raw %>% 
+  rename_all(gsub, pattern = "([0-9]+)", replacement = "T\\1") %>%
+  distinct() %>% as.data.frame() %>%
+  column_to_rownames("SCO") %>% as.matrix()
+
+```
+
+```{r}
+hist(gse18489)
+```
+
+
+#Select fits with low quality to generate candidates
+
+```{r}
+targets_to_recompute <- res_orig %>% filter(fit_quality < 0.8) %>% get("target", .)
+targets_to_recompute
+```
+
+```{r}
+measurement_times <- (measurement_times_raw - min(measurement_times_raw)) * 4 + 1
+
+
+smooth_time <- 1:max(measurement_times)
+spline_df <- 7
+spline_basis <- bs(smooth_time, degree = 3, df = spline_df)
+hrdB_spline_params <- spline_params(
+  spline_basis = spline_basis,
+  scale = 5
+)
+
+
+hrdB_params_prior <- params_prior(
+  initial_condition_prior_sigma = 1000,
+  asymptotic_normalized_state_prior_sigma = 0.5,
+  degradation_prior_mean = -2,
+  degradation_prior_sigma = 1,
+  mean_regulatory_input_prior_sigma = 5,
+  sd_regulatory_input_prior_sigma =5,
+  intercept_prior_sigma = 2
+)
+
+recompute_data <- list()
+for(t in 1:length(targets_to_recompute)) {
+  recompute_data[[t]] <- regulated_model_params(
+    measurement_times = measurement_times,
+    measurement_sigma = measurement_sigma_given(25,0.1),
+    spline_params = hrdB_spline_params,
+    regulation_signs = matrix(1,1,1),
+    params_prior = hrdB_params_prior,
+    target_expression = t(gse18489[targets_to_recompute[t],,drop=FALSE])
+  )
+}
+
+output_path <- here("out","hrdB")
+recompute <- TRUE
+if(dir.exists(output_path) && length(list.files(output_path)) == length(targets_to_recompute) * 4) {
+  recompute <- FALSE
+}
+
+if(recompute) {
+  results <- fit_regulated_multi(recompute_data, output_path)
+} else {
+  results <- sampling_multi_get_results(length(targets_to_recompute), output_path)
+}
+
+fits <- list()
+for(t in 1:length(targets_to_recompute)) {
+  fits[[t]] <- sampling_multi_read_fit(results,t)
+}
+```
+
+```{r}
+
+for(t in 1:length(targets_to_recompute)) {
+  fit <- fits[[t]]
+  
+  targ1 <- fitted_target_plot(fit, recompute_data[[t]]) 
+  targ2 <- fitted_target_observed_plot(fit, recompute_data[[t]]) 
+  plot_grid(targ1, targ2,nrow = 1) %>% print()
+  fitted_regulator_plot(fit, recompute_data[[t]], name = paste("Regulator -", targets_to_recompute[[t]])) %>% print()
+}
+
+```
+
+```{r}
+samples_per_fit <- 100
+coeffs_samples <- array(-1, c(samples_per_fit * length(targets_to_recompute), dim(spline_basis)[2]))
+for(t in 1:length(targets_to_recompute)) {
+  fit_samples <- rstan::extract(fits[[t]], pars = "coeffs")$coeffs[sample(x = 1:4000, size = samples_per_fit),,1]
+  coeffs_samples[((t-1)*samples_per_fit + 1):(t * samples_per_fit),] <- fit_samples
+}
+
+```
+```{r}
+num_clusters <- 3
+curves_samples <- coeffs_samples %*% t(spline_basis)
+clustering_curves <- kmeans(curves_samples, centers = num_clusters)
+
+for(cl in 1:num_clusters) {
+  cluster_samples <- coeffs_samples[clustering_curves$cluster == cl,]
+  samples_to_show <- cluster_samples[sample(1:clustering_curves$size[cl], default_expression_plot_num_samples),]
+  curves_to_show <- samples_to_show %*% t(spline_basis)
+  (ggmatplot(1:max(measurement_times), t(curves_to_show), main_geom = default_expression_plot_main_geom)  +
+    ggtitle(paste("Curves - cluster",cl)) +
+    geom_line(data = data.frame(x = 1:max(measurement_times), y = clustering_curves$centers[cl,]), aes(x=x,y=y), inherit.aes = FALSE, color = "red", size = 2)
+    ) %>% print()
+}
+
+clustering_coeffs <- kmeans(coeffs_samples, centers = num_clusters)
+
+for(cl in 1:num_clusters) {
+  cluster_samples <- coeffs_samples[clustering_coeffs$cluster == cl,]
+  samples_to_show <- cluster_samples[sample(1:clustering_coeffs$size[cl], default_expression_plot_num_samples),]
+  curves_to_show <- samples_to_show %*% t(spline_basis)
+  (ggmatplot(1:max(measurement_times), t(curves_to_show), main_geom = default_expression_plot_main_geom) +
+    ggtitle(paste("Coeffs - cluster",cl)) +
+    geom_line(data = data.frame(x = 1:max(measurement_times), y = (clustering_coeffs$centers[cl,] %*% t(spline_basis))[1,] ), aes(x=x,y=y), inherit.aes = FALSE, color = "red", size = 2)
+    ) %>% print()
+}
+
+```
+
+

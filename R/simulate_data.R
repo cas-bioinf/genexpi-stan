@@ -52,6 +52,43 @@ generate_random_profile <- function(time, scale, length, mean_func = 0, periodic
   }
 }
 
+test_constant_as_in_genexpi <- function(profile) {
+  errors <- profile * 0.2;
+  errors[errors < 0.5] <- 0.5
+  minUpperBound = min(profile + errors)
+  maxLowerBound = max(profile - errors)
+  return(minUpperBound > maxLowerBound)
+
+}
+
+#Eliminates profiles that are either too flat or too similar (corelation > 0.9) to the regulator profile
+generate_useful_random_profile <- function(time, scale, length, original_profile, original_profile_time) {
+  numTries = 0;
+  repeat { #Rejection sampling to get a non-flat, non-similar profile
+    random_profile = generate_random_profile(time, scale, length);
+    numTries = numTries + 1
+    if(!test_constant_as_in_genexpi(random_profile)) {
+      if(!is.null(original_profile)) {
+        na_mask = !is.na(original_profile)
+        if(numTries > 100) {
+          warning("Could not find different profile - scale: ", scale, " length: ", length, " time: ", time);
+          break;
+        }
+        else if(cor(original_profile[na_mask], (random_profile[1,original_profile_time])[na_mask]) < 0.9) {
+          break;
+        }
+      }
+      break;
+    }
+    if(numTries > 200) {
+      warning("Could not create non-flat profile. - scale: ", scale, " length: ", length, " time: ", time)
+      break;
+    }
+  }
+  return(random_profile)
+}
+
+
 plot_random_profiles <- function(n, time, scale, length, true_time = time, true_profile = NULL, mean_func = 0, periodic = FALSE, period = 1, positive_transform = TRUE) {
   profiles = array(0, c(n, length(time)));
   for(i in 1:n) {

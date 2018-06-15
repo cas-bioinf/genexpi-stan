@@ -2,6 +2,18 @@ sampling_multi_filename <- function(output.dir, id, chain) {
   file.path(output.dir, paste0("stan_out_",id,"_c",chain,".csv"))
 }
 
+sampling_multi_get_results <- function(count, output.dir, chains = 4) {
+  results <- list()
+  for(id in 1:count) {
+    files <- character(chains)
+    for(chain in 1:chains) {
+      files[chain] <- sampling_multi_filename(output.dir, id, chain)
+    }
+    results[[id]] <- files
+  }
+  results
+}
+
 sampling_multi <- function(model, data, output.dir, chains = 4, cores = parallel::detectCores(), init_per_item = NULL, ids_to_compute = 1:length(data),  ...) {
   cl <- parallel::makeCluster(cores, useXDR = FALSE)
   on.exit(parallel::stopCluster(cl))
@@ -30,7 +42,12 @@ sampling_multi <- function(model, data, output.dir, chains = 4, cores = parallel
     .dotlist$sample_file <- out_file
     .dotlist$data <- data[[id]]
     out <- do.call(rstan::sampling, args = .dotlist)
-    return(out_file)
+    if (out@mode == 1L || out@mode == 2L) {
+      #Sampling not conducted - test_grad or error
+      return(NULL)
+    } else {
+      return(out_file)
+    }
   }
 
 #  .dotlist <- c(sapply(objects, simplify = FALSE, FUN = get,
@@ -63,6 +80,7 @@ sampling_multi <- function(model, data, output.dir, chains = 4, cores = parallel
   }
   results
 }
+
 
 sampling_multi_read_fit <- function(results, index) {
   read_stan_csv(results[[index]])
