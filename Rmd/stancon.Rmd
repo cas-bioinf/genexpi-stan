@@ -353,7 +353,7 @@ s'_i = a'_i d'_i \max\tilde{x_i}
 $$
 This also lets us use the same priors for $a'_i$ and $d'_i$ as for $a_i$ and $d_i$ respectively.
 
-If the target is "reasonably well" fit with the constant synthesis model, it is not considered for the full model, because it could then be fit by any regulator, simply be setting $w = 0$. The quality of the model fit is assessed with WAIC, see discussion below for further details. Note that the constant synthesis model also fits all lowly expressed genes. To our knowledge, filtering with a such a simpler model was first proposed in our recent work [@Modrak2018].
+If the target is "reasonably well" fit with the constant synthesis model, it is not considered for the full model, because it could then be fit by any regulator, simply be setting $w = 0$. The quality of the model fit is assessed with `looic`, see discussion below for further details. Note that the constant synthesis model also fits all lowly expressed genes. To our knowledge, filtering with a such a simpler model was first proposed in our recent work [@Modrak2018].
 
 # Workflow
 
@@ -431,7 +431,7 @@ csynth_model <- stan_model(file = here('stan','constant_synthesis.stan'))
 targets <- c(putative_targets)
 data_csynth <- list()
 fits_csynth <- list()
-waic_csynth <- array(-1, length(targets))
+looic_csynth <- array(-1, length(targets))
 for(t in 1:length(targets)) {
   data_csynth[[t]] <- list(
     num_measurements = length(measurement_times),
@@ -445,7 +445,7 @@ for(t in 1:length(targets)) {
     degradation_prior_sigma = default_params_prior$degradation_prior_sigma
   )
   fits_csynth[[t]] <- sampling(csynth_model, data_csynth[[t]])
-  waic_csynth[t] <- get_waic_csynth(fits_csynth[[t]])
+  looic_csynth[t] <- get_looic_csynth(fits_csynth[[t]])
 }
 ```
 
@@ -463,14 +463,14 @@ for(t in 1:length(targets)) {
 
 ## Assesing constant synthesis fit
 
-But how to determine which genes are "fit well" by the constant synthesis model? The best way would probably be to use leave-one-out crossvalidation, but that is computationally prohibitive as hundreds of genes need to be checked in practice. Instead we approximate the value with WAIC using the ```loo``` package [@looPackage] which is feasible and aligns well with our intuition of the ordering of the quality of fits. We also tried the `looic` criterion, which has better theoretical properties, but yields almost exactly the same results for all data we tested so far and is more expensive to compute. We note that both WAIC and `looic` report warnings for almost all of our fits, indicating limited reliability. Here are the WAIC scores for the constant synthesis fits:
+But how to determine which genes are "fit well" by the constant synthesis model? The best way would probably be to use a custom crossvalidation scheme, predicting one measurement into the future using only the previous measurements. However, this is computationally prohibitive as hundreds of genes need to be checked in practice. Instead we approximate leave-one-out crossvalidation with `looic` using the ```loo``` package [@looPackage] which is feasible and aligns well with our intuition of the ordering of the quality of fits. We note that `looic` reports warnings for almost all of our fits, indicating limited reliability. Here are the `looic` scores for the constant synthesis fits:
 
 ```{r,cache=TRUE}
-csynth_table <- tibble(target = targets, waic_csynth = waic_csynth)
+csynth_table <- tibble(target = targets, looic_csynth = looic_csynth)
 csynth_table %>% kable()
 ```
 
-Our workflow currently assumes that a human inspects the fits and specifies a WAIC threshold manually. The threshold can be relatively conservative, the only thing that needs to be avoided are non-identifiabilities due to conflict between fits with $w = 0$ and fits with $w \gg 0$. In this example, we will set threshold to 0, elminating only *kinE* from further consideration. In practice it is also important to fit the constant synthesis model to the known targets, which we omitted here for brevity (none of the known targets is fit well).
+Our workflow currently assumes that a human inspects the fits and specifies a `looic` threshold manually. The threshold can be relatively conservative, the only thing that needs to be avoided are non-identifiabilities due to conflict between fits with $w = 0$ and fits with $w \gg 0$. In this example, we will set threshold to 0, elminating only *kinE* from further consideration. In practice it is also important to fit the constant synthesis model to the known targets, which we omitted here for brevity (none of the known targets is fit well).
 
 
 # Estimating regulator expression from known targets
@@ -590,7 +590,7 @@ targets <- c("purT", "yhdL", "codV")
 
 data_regulated <- list()
 fits_regulated <- list()
-waic_regulated <- array(-1, length(targets))
+looic_regulated <- array(-1, length(targets))
 coeffs_prior <- coeffs_prior_from_fit(fit_regulator_all_info, covariance_scale = 1)
 for(t in 1:length(targets)) {
   data_regulated[[t]] <- regulated_model_params(
@@ -603,7 +603,7 @@ for(t in 1:length(targets)) {
     coeffs_prior = coeffs_prior
   )  
   fits_regulated[[t]] <- sampling(regulated_model, data_regulated[[t]])
-  waic_regulated[t] <- get_waic_regulated(fits_regulated[[t]], target = 1)
+  looic_regulated[t] <- get_loo_genexpi(fits_regulated[[t]], target = 1)
 }
 ```
 
@@ -617,12 +617,36 @@ for(t in 1:length(targets)) {
 
 ```
 
-## Comparison to constant synthesis model
+## Comparison to free model
 
-We can now use WAIC to compare the fits of the putative regulators to the csynth fits. Once again, in practice, hundreds of putative targets might need to be examined. It is assumed that a human will inspect some of the fits and specify a minimal WAIC improvement over the constant synthesis model and possibly also an absolute WAIC threshold to consider fits adequate. Both visual inspection and the difference in WAIC show that *purT* cannot be fit by *sigA* while both *yhdL* and *codV* are fit well. It is however important to keep in mind that a good fit is a necessary but not sufficient condition for the regulation to be considered real.
+In addition to the csynth model we also introduce a *free* model which is the same as the regulated model, but the regulator is not observed, letting almost any target profile be fit well. We assume that if the target expression is well explained by the regulator, using the regulator should improve the predictive power of the model over the free variant.
 
 ```{r}
-regulated_table <- tibble(target = targets, waic_regulated = waic_regulated) %>%
+data_free <- list()
+fits_free <- list()
+looic_free <- array(-1, length(targets))
+for(t in 1:length(targets)) {
+  data_free[[t]] <- regulated_model_params(
+    measurement_times = measurement_times,
+    target_expression = t(expression_data[targets[t],,drop = FALSE]),
+    regulation_signs = matrix(1, 1, 1),
+    measurement_sigma = default_measurement_sigma,
+    spline_params = default_spline_params,
+    params_prior = default_params_prior
+  )  
+  fits_free[[t]] <- sampling(regulated_model, data_free[[t]])
+  looic_free[t] <-  get_loo_genexpi(fits_free[[t]], target = 1)
+}
+
+```
+
+
+## Comparison to constant synthesis model
+
+We can now use `looic` to compare the fits of the putative regulators to the csynth and free fits. Once again, in practice, hundreds of putative targets might need to be examined. It is assumed that a human will inspect some of the fits and specify a minimal `looic` improvement over the constant synthesis model and possibly also an absolute `looic` threshold to consider fits adequate. Both visual inspection and the difference in `looic` show that *purT* cannot be fit by *sigA* while both *yhdL* and *codV* are fit well. It is however important to keep in mind that a good fit is a necessary but not sufficient condition for the regulation to be considered real.
+
+```{r}
+regulated_table <- tibble(target = targets, looic_regulated = looic_regulated) %>%
   left_join(csynth_table, by = "target")
 regulated_table  %>% kable()
 ```
@@ -649,13 +673,13 @@ data_two_reg <- regulated_model_params(
 fit_two_reg <- fit_regulated(data_two_reg, regulated_model)
 ```
 
-Inspecting the fit visually and comparing the WAIC in this case we see that the regulation by *sigA* and *sigB* is plausible.
+Inspecting the fit visually and comparing the `looic` in this case we see that the regulation by *sigA* and *sigB* is plausible.
 
 ```{r, message=FALSE,warning=FALSE}
 plot1 <- fitted_target_plot(fit_two_reg, data_two_reg)
 plot2 <- fitted_target_observed_plot(fit_two_reg, data_two_reg)
 plot_grid(plot1, plot2, ncol = 2)
-regulated_table %>% filter(target == "purT") %>% mutate(waic_two_reg = get_waic_regulated(fit_two_reg)) %>% kable()
+regulated_table %>% filter(target == "purT") %>% mutate(looic_two_reg = get_loo_genexpi(fit_two_reg)) %>% kable()
 
 
 ```
@@ -664,7 +688,7 @@ regulated_table %>% filter(target == "purT") %>% mutate(waic_two_reg = get_waic_
 
 While the model as presented already coversthe full workflow to infer novel regulations, there are some issues that need to be ironed out before we can rely on it. Most notably, we are yet to perform a thorough evaluation and comparison with other tools for the same task. Initial results were actually comparable to a simpler maximum likelihood variant of the model with separate splining and parameter fitting phases [as presented in @Modrak2018]. We are currently working to understand why there is not a marked improvement, as we know that some of the incorrect results of the simpler version stemmed from separate splining.
 
-Further workflow steps we are not happy with are the way we fit a multivariete normal distribution to the posterior of regulator expression, the arbitrary way we use WAIC to make decisions, and convergence issues that sometimes arise when running the model without observed regulator expression on real data.
+Further workflow steps we are not happy with are the way we fit a multivariete normal distribution to the posterior of regulator expression, the arbitrary way we use `looic` to make decisions, and convergence issues that sometimes arise when running the model without observed regulator expression on real data.
 There is also substantial work to be done in encapsulating the model as a package and providing a cleaner interface.
 
 
