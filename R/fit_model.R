@@ -45,17 +45,27 @@ fit_csynth_multi <- function(data, output.dir,
 }
 
 
-get_log_lik_regulated <- function(fit, target = 1) {
-  samples_log_lik <- rstan::extract(fit, "log_likelihood")$log_likelihood
-  samples_log_lik[,,target]
+get_log_lik_genexpi <- function(fit, target = 1) {
+  samples_log_lik <- extract_log_lik(fit, parameter_name = "log_likelihood", merge_chains = FALSE)
+  if(length(dim(samples_log_lik)) == 3 && target == 1) {
+    samples_log_lik
+  } else {
+    stop("Not implemented yet - how to extract log_lik for multiple targets")
+    samples_log_lik[,,target]
+  }
 }
 
 get_log_lik_csynth <- function(fit) {
-  rstan::extract(fit, "log_likelihood")$log_likelihood
+  extract_log_lik(fit, parameter_name = "log_likelihood", merge_chains = FALSE)
 }
 
-get_loo_genexpi <- function(fit) {
-  log_lik <- extract_log_lik(fit, parameter_name = "log_likelihood", merge_chains = FALSE)
+get_loo_genexpi <- function(fit, target = 1) {
+  log_lik <- get_log_lik_genexpi(fit, target)
+  loo(log_lik, r_eff = relative_eff(exp(log_lik)))
+}
+
+get_loo_csynth <- function(fit) {
+  log_lik <- get_log_lik_csynth(fit)
   loo(log_lik, r_eff = relative_eff(exp(log_lik)))
 }
 
