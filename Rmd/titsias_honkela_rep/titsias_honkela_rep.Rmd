@@ -1,0 +1,63 @@
+---
+title: "Titsias & Honkela replication"
+output: html_notebook
+---
+
+```{r setup}
+library(R.matlab)
+library(tidyverse)
+library(here)
+```
+
+
+```{r load_data}
+data.mat <- readMat(here("local_data","dros_expression_data.mat"))$dros.expression.data
+gene.names <- unlist(data.mat[[1]])
+expression <- data.mat[[2]]
+variances <- data.mat[[3]]
+```
+
+Reproduce part of Figure 5 of Titsias & Honkela to check the data is right
+
+```{r}
+to.show <- c("TIN" = "FBgn0004110",
+             "BIN"= "FBgn0045759",
+             "TWI" = "FBgn0003900",
+             "BAP" = "FBgn0004862",
+             "MEF2" = "FBgn0011656"
+             )
+
+for(g in names(to.show)) {
+  row.id <- which(gene.names == to.show[g])
+  err = 2 * sqrt(variances[row.id,25:36])
+  plot(expression[row.id,25:36])
+  title(g)
+  segments(x0 = 1:12, y0 = expression[row.id,25:36] - err, y1 =  expression[row.id,25:36] + err)
+}
+
+```
+```{r}
+final_training_genes_ids = c(97,216,251,570,577,1325,2732,2733,2735,2773,3430,3888,3900,4133,4394,4512,4654,4795,10433,26403,30900,31313,38134,39039,40089)
+
+final_training_genes = sprintf("FBgn%07d",final_training_genes_ids)
+
+```
+
+Comparing to Figure 18 in the supplement
+
+```{r}
+for(g in final_training_genes) {
+  row.id <- which(gene.names == g)
+  err <- 2 * colMeans(sqrt(variances[row.id,1:12, drop = FALSE]))
+  expr <- colMeans(expression[row.id,1:12, drop = FALSE])
+#  err <- 2 * sqrt(variances[row.id,1:12])
+ # expr <- expression[row.id,1:12]
+  plot(expr)
+  title(g)
+  segments(x0 = 1:12, y0 = expr - err, y1 =  expr + err)
+}
+```
+"FBgn0000251" - 2nd
+"FBgn0003888" - 1st
+"FBgn0004394" - 1st
+
