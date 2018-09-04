@@ -36,6 +36,8 @@ In determining regulatory interactions within cells, models based on ordinary di
 
 This notebook shows first usable version of the model, but there are still several outstanding issues which we highlight. We nevertheless hope that the modelling approach we took is of interest to the Stan community and can provide inspiration for other models.
 
+A runnable version of this Rmd file and all supporting code can be found at https://github.com/cas-bioinf/genexpi-stan/tree/stancon2018
+
 # Biological Background
 In a very simplified form the [central dogma](https://en.wikipedia.org/wiki/Central_dogma_of_molecular_biology) of molecular biology may be paraphrased as follows: The DNA contains all of the instructions needed to run a cell and can be divided into coding and non-coding regions. The coding regions of DNA can be *transcribed* to form messenger RNA (mRNA) molecules containing a mirror-copy of the coding region. The messenger RNA is then *translated* to create protein. Proteins perform most of the actual functions of the cells, including control of transcription and translation. This process is regulated at all stages and involves many feedback loops: most importantly, the rate of transcription of a gene is controlled by the abundance of regulatory proteins binding to specific sequences of the DNA near the coding region. The rate of translation and degradation of mRNA can also be regulated separately by other proteins and the rate of degradation of proteins themselves is also affected by other proteins. There are many exceptions where the above simplification does not hold, but the vast majority of cellular life can be described in these terms. 
 
@@ -431,7 +433,7 @@ csynth_model <- stan_model(file = here('stan','constant_synthesis.stan'))
 targets <- c(putative_targets)
 data_csynth <- list()
 fits_csynth <- list()
-looic_csynth <- array(-1, length(targets))
+loo_csynth <- list()
 for(t in 1:length(targets)) {
   data_csynth[[t]] <- list(
     num_measurements = length(measurement_times),
@@ -445,7 +447,7 @@ for(t in 1:length(targets)) {
     degradation_prior_sigma = default_params_prior$degradation_prior_sigma
   )
   fits_csynth[[t]] <- sampling(csynth_model, data_csynth[[t]])
-  looic_csynth[t] <- get_looic_csynth(fits_csynth[[t]])
+  loo_csynth[[t]] <- get_loo_csynth(fits_csynth[[t]])
 }
 ```
 
@@ -466,8 +468,13 @@ for(t in 1:length(targets)) {
 But how to determine which genes are "fit well" by the constant synthesis model? The best way would probably be to use a custom crossvalidation scheme, predicting one measurement into the future using only the previous measurements. However, this is computationally prohibitive as hundreds of genes need to be checked in practice. Instead we approximate leave-one-out crossvalidation with `looic` using the ```loo``` package [@looPackage] which is feasible and aligns well with our intuition of the ordering of the quality of fits. We note that `looic` reports warnings for almost all of our fits, indicating limited reliability. Here are the `looic` scores for the constant synthesis fits:
 
 ```{r,cache=TRUE}
-csynth_table <- tibble(target = targets, looic_csynth = looic_csynth)
-csynth_table %>% kable()
+get_ic_estimate <- function(x) {
+  x %>% map_dbl(function(x) { x$estimates["looic","Estimate"]})
+}
+
+
+csynth_table <- tibble(target = targets, looic_csynth = get_ic_estimate(loo_csynth))
+csynth_table 
 ```
 
 Our workflow currently assumes that a human inspects the fits and specifies a `looic` threshold manually. The threshold can be relatively conservative, the only thing that needs to be avoided are non-identifiabilities due to conflict between fits with $w = 0$ and fits with $w \gg 0$. In this example, we will set threshold to 0, elminating only *kinE* from further consideration. In practice it is also important to fit the constant synthesis model to the known targets, which we omitted here for brevity (none of the known targets is fit well).
@@ -541,7 +548,7 @@ To transfer this "learned" expression of the regulator to other fits, we need to
 pairs(fit_regulator_all_info, pars = "coeffs")
 samples_coeffs <- rstan::extract(fit_regulator_all_info,"coeffs")$coeffs[,,1]
 mvn_test_results <- mvn(samples_coeffs, mvnTest = "mardia", desc = FALSE, multivariatePlot = "qq")
-mvn_test_results$multivariateNormality %>% kable()
+mvn_test_results$multivariateNormality 
 ```
 
 The MVN approximation is still the most practical. For simplicity we fit MVN by the method of moments. In practice, we have found that MVN fitted this way still gives a lot of leeway for the putative target fits to move away from this estimated distribution as it is only half the data used in the model. To combat this effect, we shrink the "learned" distribution by multiplying the covariance matrix by $0.5$. We currently do not understand deeply why the shrinking leads to better behavior, and it is a simple hack which we should improve upon and provide a more principled way to determine appropriate MVN parameters or even use a different multivariate distribution to account for the skew and kurtosis. 
@@ -585,12 +592,12 @@ Since known targets are available, the MVN approximation of the posterior of the
 
 Below are samples of the posterior distribution of target expression and simulated replicates of observed expression:
 
-```{r,cache=TRUE}
+```{r fitting_regulated,cache=TRUE}
 targets <- c("purT", "yhdL", "codV")
 
 data_regulated <- list()
 fits_regulated <- list()
-looic_regulated <- array(-1, length(targets))
+loo_regulated <- list()
 coeffs_prior <- coeffs_prior_from_fit(fit_regulator_all_info, covariance_scale = 1)
 for(t in 1:length(targets)) {
   data_regulated[[t]] <- regulated_model_params(
@@ -603,7 +610,7 @@ for(t in 1:length(targets)) {
     coeffs_prior = coeffs_prior
   )  
   fits_regulated[[t]] <- sampling(regulated_model, data_regulated[[t]])
-  looic_regulated[t] <- get_loo_genexpi(fits_regulated[[t]], target = 1)
+  loo_regulated[[t]] <- get_loo_genexpi(fits_regulated[[t]], target = 1)
 }
 ```
 
@@ -617,14 +624,14 @@ for(t in 1:length(targets)) {
 
 ```
 
-## Comparison to free model
+## Fitting the free model
 
-In addition to the csynth model we also introduce a *free* model which is the same as the regulated model, but the regulator is not observed, letting almost any target profile be fit well. We assume that if the target expression is well explained by the regulator, using the regulator should improve the predictive power of the model over the free variant.
+In addition to the csynth model we also introduce a *free* model which is the same as the regulated model, but the regulator is not observed, letting almost any target profile be fit well. We assume that if the target expression is well explained by the regulator, using the regulator should improve the predictive power of the model over the free variant. Below, we show the fits of the free model and the associated (unconstrained) imaginary regulator profiles.
 
-```{r}
+```{r fitting_free, cache = TRUE}
 data_free <- list()
 fits_free <- list()
-looic_free <- array(-1, length(targets))
+loo_free <- list()
 for(t in 1:length(targets)) {
   data_free[[t]] <- regulated_model_params(
     measurement_times = measurement_times,
@@ -635,20 +642,32 @@ for(t in 1:length(targets)) {
     params_prior = default_params_prior
   )  
   fits_free[[t]] <- sampling(regulated_model, data_free[[t]])
-  looic_free[t] <-  get_loo_genexpi(fits_free[[t]], target = 1)
+  loo_free[[t]] <-  get_loo_genexpi(fits_free[[t]], target = 1)
+}
+
+```
+
+```{r,cache=TRUE}
+for(t in 1:length(targets)) {
+  fit <- fits_free[[t]]
+  plot1 <-  fitted_target_plot(fit, data_regulated[[t]], name = targets[t])
+  plot2 <- fitted_regulator_plot(fit, data_regulated[[t]], name = targets[t])
+  plot_grid(plot1, plot2, ncol = 2) %>% print()
 }
 
 ```
 
 
-## Comparison to constant synthesis model
+
+## Comparison to baseline models
 
 We can now use `looic` to compare the fits of the putative regulators to the csynth and free fits. Once again, in practice, hundreds of putative targets might need to be examined. It is assumed that a human will inspect some of the fits and specify a minimal `looic` improvement over the constant synthesis model and possibly also an absolute `looic` threshold to consider fits adequate. Both visual inspection and the difference in `looic` show that *purT* cannot be fit by *sigA* while both *yhdL* and *codV* are fit well. It is however important to keep in mind that a good fit is a necessary but not sufficient condition for the regulation to be considered real.
 
 ```{r}
-regulated_table <- tibble(target = targets, looic_regulated = looic_regulated) %>%
+
+regulated_table <- tibble(target = targets, looic_regulated = get_ic_estimate(loo_regulated), looic_free = get_ic_estimate(loo_free)) %>%
   left_join(csynth_table, by = "target")
-regulated_table  %>% kable()
+regulated_table  
 ```
 
 
@@ -656,7 +675,7 @@ regulated_table  %>% kable()
 
 Since *purT* is likely not regulated by *sigA*, we might try a combination of multiple regulators. Unless the dataset is much larger than the one we are using here, this is highly speculative: many combinations of two regulators are able to fit a majority of all genes quite well.
 
-```{r, cache=TRUE}
+```{r multiple_reg, cache=TRUE}
 regulators = c("sigA", "sigB")
 targets = "purT"
 
@@ -679,7 +698,7 @@ Inspecting the fit visually and comparing the `looic` in this case we see that t
 plot1 <- fitted_target_plot(fit_two_reg, data_two_reg)
 plot2 <- fitted_target_observed_plot(fit_two_reg, data_two_reg)
 plot_grid(plot1, plot2, ncol = 2)
-regulated_table %>% filter(target == "purT") %>% mutate(looic_two_reg = get_loo_genexpi(fit_two_reg)) %>% kable()
+regulated_table %>% filter(target == "purT") %>% mutate(looic_two_reg = get_loo_genexpi(fit_two_reg)$estimates["looic","Estimate"]) 
 
 
 ```
