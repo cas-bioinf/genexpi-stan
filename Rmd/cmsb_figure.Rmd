@@ -68,7 +68,7 @@ data2 <- data.frame(time = time, regulator = regulator, target1 = target1, targe
 time <- seq(0,2,length.out = 100)
 regulator <- sin(time * 4) + 1
 
-params1 <- c(degradation = 3, bias = -1, sensitivity = 3, weight = 5, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
+params1 <- c(degradation = 3, bias = -2, sensitivity = 3, weight = 10, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
 target1 <-  ode( y = c(x = 1.5), times = time, func = target_ODE, parms = params1, method = "ode45")[,"x"];
 
 params2 <- c(degradation = 3.4, bias = 0, sensitivity = 6, weight = 0, basal_transcription = 0, protein = approxfun(time, regulator, rule=2));
@@ -82,7 +82,7 @@ params_to_legend <- function(params) {
   paste0("s = ", params["sensitivity"],", w = ", params["weight"], ", b = ", params["bias"], ", d = ", params["degradation"])
 }
 
-type3 = "b) w = 0 vs. w >> 0"
+type3 = "b) w = 0 vs. w = 5"
 measured_data3 = data.frame(time = seq(0,2,length.out = 9), 
                            expression = c(1.8,0.9,1,0.66, 1.11,0.6,0.7,0.96,1.03), type = type3)
 
@@ -104,7 +104,7 @@ target2 <-  ode( y = c(x = 0), times = time, func = target_ODE, parms = params2,
 
 
 
-type4 = "a) w < 0 vs. w > 0"
+type4 = "a) w = -10 vs. w = +10"
 measured_data4 = data.frame(time = seq(0,2,length.out = 9), 
                            expression = c(0.05,1.62,1.44,0.83, 0.96,1.01,0.72,1.07,0.65), type = type4)
 
